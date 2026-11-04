@@ -1,8 +1,9 @@
 # Bring-up ESP32 (C3 e S3) — medições e decisões
 
-> **Status:** o port foi implementado em [`firmware/`](../firmware/); este
-> documento registra o bring-up e as medições de hardware que embasaram a
-> escolha do alvo. Para build, configuração e limitações do firmware final, veja
+> **Status:** o port foi implementado em [`firmware/`](../firmware/) com os envs
+> `esp32c3` e `esp32s3`; este documento registra o bring-up e as medições de
+> hardware que embasaram a escolha do alvo. Para build, configuração e
+> limitações do firmware final, veja
 > [`firmware/README.md`](../firmware/README.md).
 
 Registro do que foi executado para validar a viabilidade do port do bridge X5.
@@ -262,7 +263,9 @@ Arduino funciona, mas o core instalado usa **IDF 4.4.7**.
 
 ## Status final
 
-O alvo escolhido foi o **ESP32-C3**. O firmware final está em
-[`firmware/`](../firmware/) e foi validado com uma câmera X5: discovery, MJPEG,
-snapshot, MQTT, OTA, `/config` e `/reboot`. Medições, limites e pendências estão
-em [`firmware/README.md`](../firmware/README.md).
+O firmware final está em [`firmware/`](../firmware/) e tem dois envs:
+**ESP32-C3** (`esp32c3`) e **ESP32-S3** (`esp32s3`). Foi validado com uma câmera
+X5 em ambos: discovery, MJPEG, snapshot, MQTT, OTA, `/config` e `/reboot`. No
+S3, a PSRAM de 2 MB e o dual-core ficaram ativos, mas o RSSI no teste ficou
+~-64/-65 dBm contra ~-50 dBm do C3; o FPS foi limitado pelo WiFi. Medições,
+limites e pendências estão em [`firmware/README.md`](../firmware/README.md).

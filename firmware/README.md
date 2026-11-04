@@ -1,14 +1,16 @@
-# Firmware ESP32-C3 — X5 Bridge
+# Firmware ESP32-C3 / ESP32-S3 — X5 Bridge
 
-Firmware do bridge para câmeras X5, alvo **ESP32-C3** (4 MB flash, sem PSRAM).
+Firmware do bridge para câmeras X5, com alvos **ESP32-C3** e **ESP32-S3**.
 Usa o mesmo stack dos outros devices da casa: `ESPAsyncWiFiManager`,
 `ESPAsyncWebServer`, `ESPAsyncHTTPUpdateServer` e `PicoMQTT`. O vídeo usa TCP
 raw em portas separadas do servidor de administração.
 
 ## Hardware
 
-- ESP32-C3 (testado: QFN32 rev v0.4, 4 MB flash, sem PSRAM).
-- USB nativo/JTAG; a gravação usa `/dev/ttyACM0` por padrão.
+- ESP32-C3 (testado: QFN32 rev v0.4, 4 MB flash, sem PSRAM, single-core).
+- ESP32-S3 (testado: 4 MB flash, 2 MB PSRAM, dual-core 240 MHz).
+- USB nativo/JTAG; os envs apontam para as portas `/dev/serial/by-id/...` dos
+  boards testados.
 - WiFi 2.4 GHz.
 
 ## Estrutura do projeto
@@ -30,32 +32,35 @@ firmware/
 ## Build e gravação
 
 ```bash
-# build
-~/.platformio/penv/bin/pio run -d firmware
+# ESP32-C3
+~/.platformio/penv/bin/pio run -d firmware -e esp32c3
+~/.platformio/penv/bin/pio run -d firmware -e esp32c3 -t upload
+~/.platformio/penv/bin/pio run -d firmware -e esp32c3 -t monitor
 
-# gravar no C3
-~/.platformio/penv/bin/pio run -d firmware -t upload
-
-# monitor serial
-~/.platformio/penv/bin/pio run -d firmware -t monitor
+# ESP32-S3 (4 MB flash + 2 MB PSRAM)
+~/.platformio/penv/bin/pio run -d firmware -e esp32s3
+~/.platformio/penv/bin/pio run -d firmware -e esp32s3 -t upload
+~/.platformio/penv/bin/pio run -d firmware -e esp32s3 -t monitor
 ```
 
-O `platformio.ini` usa:
+O `platformio.ini` tem uma seção `[env]` comum e dois envs:
 
-- `platform = espressif32@7.1.3`, `board = esp32-c3-devkitm-1`;
-- `board_build.partitions = min_spiffs.csv` (app0/app1 de 1,875 MB, LittleFS de
-  128 KB);
-- `board_build.filesystem = littlefs`;
-- `-DARDUINO_USB_MODE=1` e `-DARDUINO_USB_CDC_ON_BOOT=1`;
-- `upload_port = /dev/ttyACM0` (ajuste se necessário).
+- comuns: `platform = espressif32@7.1.3`, `min_spiffs.csv` (app0/app1 de
+  1,875 MB, LittleFS de 128 KB), `littlefs`, USB CDC e as libs;
+- `esp32c3`: `board = esp32-c3-devkitm-1`;
+- `esp32s3`: `board = esp32-s3-devkitc-1`,
+  `board_upload.flash_size = 4MB`, `board_build.arduino.memory_type = qio_qspi`
+  e `-DBOARD_HAS_PSRAM`.
 
-O firmware ocupa ~0,98 MB (≈50% do slot de app). O `.bin` final fica em
-`.pio/build/esp32c3/firmware.bin` e também é copiado para
+Os `upload_port`/`monitor_port` usam `/dev/serial/by-id/...`; ajuste se os
+boards aparecerem em outra porta. O firmware ocupa ~0,93–0,98 MB (≈48–50% do
+slot de app). O `.bin` final fica em `.pio/build/esp32c3/firmware.bin` ou
+`.pio/build/esp32s3/firmware.bin` e também é copiado para
 `firmware/firmware.bin`.
 
 ## Primeiro boot e configuração
 
-1. No primeiro boot, o C3 sobe o AP aberto **`x5bridge`**.
+1. No primeiro boot, o device (C3 ou S3) sobe o AP aberto **`x5bridge`**.
 2. Conecte um celular/notebook nesse AP e abra `http://192.168.4.1`.
 3. Escolha a rede WiFi e informe a senha.
 4. O device reinicia e passa a responder em `http://x5bridge.local/`.
@@ -69,7 +74,8 @@ WiFiManager cuida apenas do WiFi; o resto é configurado na página.
   sanitizado para `[A-Za-z0-9_-]`);
 - broker MQTT: IP, porta, usuário e senha;
 - 4 slots de câmera (`CAM0`..`CAM3`): nome, IP e habilitado;
-- portas fixas por slot: `CAM0`=8080, `CAM1`=8081, `CAM2`=8082, `CAM3`=8083.
+- portas fixas por slot: `CAM0`=8080, `CAM1`=8081, `CAM2`=8082, `CAM3`=8083;
+- no C3, até **2** câmeras ativas; no S3, até **4** (buffers na PSRAM).
 
 Ao salvar, o device reinicia para aplicar a configuração. O reinício é agendado
 (1,5 s) para o servidor terminar de enviar a resposta HTTP.
@@ -127,11 +133,12 @@ o anúncio é repetido a cada 5 s (`MQTT_ANNOUNCE_INTERVAL_MS`).
 
 ### Tarefas
 
-- **`camera_task`** (prioridade 5): sockets UDP por câmera, `poll`, ACK de
-  cada pacote, keepalive (`P2PAlive`), extração do ticket, envio de VPS/SV e
+- **`camera_task`** (prioridade 5, core 0): sockets UDP por câmera, `poll`, ACK
+  de cada pacote, keepalive (`P2PAlive`), extração do ticket, envio de VPS/SV e
   montagem dos JPEGs. Timeout de 5 s sem pacotes → relogin.
-- **`stream_task`** (prioridade 4): listeners TCP 8080+, parser HTTP mínimo,
-  envio com timeout de socket (1 s) e descarte/limite de clientes.
+- **`stream_task`** (prioridade 4, core 1 no S3 e core 0 no C3): listeners TCP
+  8080+, parser HTTP mínimo, envio com timeout de socket (1 s) e
+  descarte/limite de clientes.
 - **Loop principal**: `handle_web()` (mDNS é do stack) e `handle_mqtt()`;
   verifica o reinício agendado.
 - **Async web server** e **PicoMQTT** rodam em suas próprias tarefas.
@@ -139,10 +146,14 @@ o anúncio é repetido a cada 5 s (`MQTT_ANNOUNCE_INTERVAL_MS`).
 ### Memória e buffers
 
 - Cada câmera ativa aloca **2 × 24 KB** (montagem + último JPEG).
+- No S3 esses buffers vão para a **PSRAM** (fallback para RAM interna); no C3
+  ficam na RAM interna.
 - O `stream_task` usa um buffer compartilhado de **24 KB** para enviar sem
   segurar o mutex da câmera.
-- Limites: `MAX_ACTIVE_CAMERAS = 2`, `MAX_CLIENTS_PER_STREAM = 2`.
-- Com uma câmera + um cliente, o heap livre fica em ~70–77 KB (mín. ~50 KB).
+- Limites: `MAX_ACTIVE_CAMERAS = 2` no C3 e `4` no S3 (PSRAM);
+  `MAX_CLIENTS_PER_STREAM = 2`.
+- C3 com uma câmera + um cliente: heap ~70–77 KB livre (mín. ~50 KB).
+- S3 com uma câmera + um cliente: heap ~200 KB livre e PSRAM ~2 MB livre.
   A segunda câmera só inicia se a alocação couber; caso contrário o slot fica
   offline com log de `BUFFER FAIL`.
 
@@ -174,39 +185,46 @@ mantém o último frame para `/snapshot` e para novos clientes.
 
 Executada com a câmera `BATE558596HDLZB` em `192.168.0.10`:
 
-| Item | Resultado |
-|---|---|
-| Build/flash | OK (~0,98 MB, 50% do slot) |
-| WiFi + portal + mDNS | OK |
-| `discover` | OK |
-| `/video` e `/snapshot` | OK |
-| MQTT | OK (`x5bridge/...` e `x5bridge/CAM0/...`) |
-| OTA `.bin` | OK |
-| `/config` + reinício | OK |
-| `/reboot` | OK |
-| Soak 10 min | OK, sem reboot |
-| `/reset` | não testado (apaga WiFi/config) |
-| 2 câmeras | não testado (sem hardware) |
+| Item | C3 | S3 |
+|---|---|---|
+| Build/flash | OK (~0,98 MB) | OK (~0,93 MB) |
+| WiFi + portal + mDNS | OK | OK |
+| PSRAM + dual-core | — | OK (2 MB, cores 0/1) |
+| `discover` | OK | OK |
+| `/video` e `/snapshot` | OK | OK |
+| MQTT | OK | OK |
+| OTA `.bin` | OK | OK |
+| `/config` + reinício | OK | OK |
+| `/reboot` | OK | OK |
+| Soak 10 min | OK, sem reboot | não repetido |
+| `/reset` | não testado | não testado |
+| 2 câmeras | não testado | não testado |
 
 Medições:
 
 - câmera nativa (Linux `session`): ~11,9 fps (358 frames/30 s);
-- C3 sem cliente: ~10 fps, heap ~87 KB livre;
-- C3 com 1 cliente: ~7,7 fps, heap ~70–77 KB livre (mín. ~50 KB);
+- C3 (RSSI ~-50 dBm): ~10 fps sem cliente; ~7,7 fps com 1 cliente; heap ~87 KB
+  livre (mín. ~50 KB);
+- S3 (RSSI ~-64/-65 dBm): ~9 fps sem cliente; ~7,5 fps com 1 cliente; heap
+  ~204 KB livre e PSRAM ~2 MB;
 - JPEG ~18–22 KB;
-- soak: 601→6103 frames (~9,6 fps médio), heap estável.
+- soak no C3: 601→6103 frames (~9,6 fps médio), heap estável.
 
 Os ~16 fps do doc original não se reproduziram nesta câmera; o modo atual entrega
-~12 fps.
+~12 fps. No S3, o FPS não subiu porque o RSSI estava ~15 dB pior que o do C3; o
+limitador foi o WiFi, não CPU/RAM.
 
 ## Limitações e pendências
 
 - Admin/OTA abertos, sem autenticação (decisão de projeto; LAN).
 - `/reset` implementado, mas não testado em produção.
 - Reconexão após queda de energia da câmera não foi testada explicitamente.
-- Segunda câmera real não testada; memória é o limitador.
+- Segunda câmera real não testada. Limite: 2 ativas no C3 e 4 no S3 (PSRAM);
+  cada stream aceita 2 clientes.
 - Broker sem `retained` no teste.
-- FPS abaixo do documentado originalmente.
+- FPS abaixo do documentado originalmente (~12 fps nativos nesta câmera).
+- S3 testado com RSSI ~-64/-65 dBm contra ~-50 dBm do C3; o FPS ficou limitado
+  pelo WiFi. Com antena/posição melhor, o S3 deve se aproximar do teto (~12 fps).
 
 ## Troubleshooting
 
@@ -220,6 +238,8 @@ Os ~16 fps do doc original não se reproduziram nesta câmera; o modo atual entr
   broker aceita conexões anônimas.
 - **OTA falha**: use `.bin` (não `.gz`); o `Update` do ESP32 não descomprime
   gzip.
+- **S3 com FPS baixo/RSSI ruim**: confira a antena (PCB vs externa/jumper) e
+  aproxime do AP; o S3 testado ficou ~15 dB pior que o C3.
 - **Não rode `linux/serve`/`linux/session` junto com o bridge**: a câmera atende
   uma sessão por vez.
 

@@ -360,6 +360,20 @@ static void camera_task(void* arg) {
   }
 }
 
+static uint8_t* alloc_frame_buffer(size_t size) {
+#ifdef BOARD_HAS_PSRAM
+  uint8_t* p = (uint8_t*)heap_caps_malloc(
+      size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (p) {
+    xlog_println("CAM buffer allocated in PSRAM");
+    return p;
+  }
+  xlog_println("CAM PSRAM alloc failed, falling back to internal");
+#endif
+  return (uint8_t*)heap_caps_malloc(
+      size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+}
+
 static bool start_session(int slot) {
   if (slot < 0 || slot >= MAX_CAMERAS) return false;
   if (sessions[slot].active) return true;
@@ -389,10 +403,8 @@ static bool start_session(int slot) {
     return false;
   }
 
-  uint8_t* assemble = (uint8_t*)heap_caps_malloc(
-      MAX_JPEG_SIZE, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-  uint8_t* last_jpeg = (uint8_t*)heap_caps_malloc(
-      MAX_JPEG_SIZE, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  uint8_t* assemble = alloc_frame_buffer(MAX_JPEG_SIZE);
+  uint8_t* last_jpeg = alloc_frame_buffer(MAX_JPEG_SIZE);
   if (!assemble || !last_jpeg) {
     xlog_printf("CAM%d BUFFER FAIL\n", slot);
     if (assemble) free(assemble);
@@ -416,8 +428,9 @@ static bool start_session(int slot) {
   inet_pton(AF_INET, eeprom.cameras[slot].ip, &s.addr.sin_addr);
   strlcpy(s.name, eeprom.cameras[slot].name, sizeof(s.name));
 
-  xlog_printf("CAM%d START %s:%d heap=%u\n", slot, eeprom.cameras[slot].ip,
-             CAMERA_UDP_PORT, (unsigned)ESP.getFreeHeap());
+  xlog_printf("CAM%d START %s:%d heap=%u psram=%u\n", slot,
+              eeprom.cameras[slot].ip, CAMERA_UDP_PORT,
+              (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getFreePsram());
   send_lan_search(slot);
   return true;
 }
@@ -437,7 +450,8 @@ void init_camera() {
     if (start_session(i)) started++;
   }
 
-  xTaskCreate(camera_task, "camera", 8192, NULL, 5, NULL);
+  xlog_printf("CAM TASK CORE 0 (chip cores=%u)\n", ESP.getChipCores());
+  xTaskCreatePinnedToCore(camera_task, "camera", 8192, NULL, 5, NULL, 0);
 }
 
 void camera_lock() {

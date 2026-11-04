@@ -356,5 +356,8 @@ void init_stream() {
     xlog_printf("STREAM CAM%d listening on %d\n", i, CAMERA_BASE_PORT + i);
   }
 
-  xTaskCreate(stream_task, "stream", 8192, NULL, 4, NULL);
+  int core = ESP.getChipCores() > 1 ? 1 : 0;
+  xlog_printf("STREAM TASK CORE %d (chip cores=%u)\n", core,
+              ESP.getChipCores());
+  xTaskCreatePinnedToCore(stream_task, "stream", 8192, NULL, 4, NULL, core);
 }
