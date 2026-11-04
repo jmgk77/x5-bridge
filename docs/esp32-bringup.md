@@ -1,10 +1,11 @@
 # Bring-up ESP32 (C3 e S3) — medições e decisões
 
-> **Status:** o port foi implementado em [`firmware/`](../firmware/) com os envs
-> `esp32c3` e `esp32s3`; este documento registra o bring-up e as medições de
-> hardware que embasaram a escolha do alvo. Para build, configuração e
-> limitações do firmware final, veja
-> [`firmware/README.md`](../firmware/README.md).
+> **Status:** o port foi implementado em [`firmware/`](../firmware/) com os
+> envs `esp32c3`, `esp32s3`, `esp32cam` e `esp32dev`; este documento registra o
+> bring-up e as medições de hardware que embasaram a escolha do alvo. Para
+> build, configuração e limitações do firmware final, veja
+> [`firmware/README.md`](../firmware/README.md). O comparativo das três
+> ESP32-CAM está em [`esp32cam-boards.md`](esp32cam-boards.md).
 
 Registro do que foi executado para validar a viabilidade do port do bridge X5.
 Serve para não refazer a investigação nem perder as configurações que funcionaram.
@@ -263,9 +264,13 @@ Arduino funciona, mas o core instalado usa **IDF 4.4.7**.
 
 ## Status final
 
-O firmware final está em [`firmware/`](../firmware/) e tem dois envs:
-**ESP32-C3** (`esp32c3`) e **ESP32-S3** (`esp32s3`). Foi validado com uma câmera
-X5 em ambos: discovery, MJPEG, snapshot, MQTT, OTA, `/config` e `/reboot`. No
-S3, a PSRAM de 2 MB e o dual-core ficaram ativos, mas o RSSI no teste ficou
-~-64/-65 dBm contra ~-50 dBm do C3; o FPS foi limitado pelo WiFi. Medições,
-limites e pendências estão em [`firmware/README.md`](../firmware/README.md).
+O firmware final está em [`firmware/`](../firmware/) e tem quatro envs:
+**ESP32-C3** (`esp32c3`), **ESP32-S3** (`esp32s3`), **ESP32-CAM**
+(`esp32cam`) e **ESP32 DevKit** (`esp32dev`). Foi validado com uma câmera X5 em
+todos: discovery, MJPEG, snapshot, MQTT, OTA, `/config` e `/reboot`. No S3, a
+PSRAM de 2 MB e o dual-core ficaram ativos, mas o RSSI no teste ficou
+~-64/-65 dBm contra ~-50 dBm do C3; o FPS foi limitado pelo WiFi. As três
+ESP32-CAM foram comparadas em [`esp32cam-boards.md`](esp32cam-boards.md); a
+board com a câmera quebrada foi usada como bridge (a câmera onboard não é
+usada). Medições, limites e pendências estão em
+[`firmware/README.md`](../firmware/README.md).

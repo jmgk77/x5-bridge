@@ -49,7 +49,10 @@ void mqtt_publish_status() {
     publish_retained(base + "/LAST_FRAME", String(st.last_frame_ms));
   }
 
-  xlog_printf("MQTT ANNOUNCE OK (heap=%u)\n", (unsigned)ESP.getFreeHeap());
+  static uint32_t announce_count = 0;
+  if (announce_count++ % 12 == 0) {
+    xlog_printf("MQTT ANNOUNCE OK (heap=%u)\n", (unsigned)ESP.getFreeHeap());
+  }
 }
 
 void init_mqtt() {
