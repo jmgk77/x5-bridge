@@ -451,8 +451,10 @@ O firmware usa `min_spiffs.csv` (app0/app1 de 1,875 MB, LittleFS de 128 KB) e
   câmera. O nome padrão é `x5bridge`.
 - `/discover`: faz `LanSearch` por broadcast e lista as câmeras encontradas para
   atribuir a um slot.
-- Limites no C3: **2 câmeras ativas** e **2 clientes por stream**; resolução
-  fixa em 640x480.
+- Limites no código: **2 câmeras ativas** e **2 clientes por stream**; resolução
+  fixa em 640x480. Na prática, com o stack async, **1 câmera + 1 cliente** é o
+  cenário confortável no C3. A segunda câmera só inicia se houver heap; se a
+  alocação de buffers falhar, o slot fica offline.
 - Sem autenticação (uso em LAN).
 
 ### Endpoints
@@ -484,9 +486,17 @@ x5bridge/CAM0/CLIENTS      x5bridge/CAM0/FPS      x5bridge/CAM0/LAST_FRAME
 retained; por isso o anúncio é repetido a cada 5 s (mesmo padrão dos outros
 devices da casa).
 
-### Medições no C3 (uma câmera)
+### Medições no C3 (uma câmera, 640x480)
 
-- heap livre ~110 KB (mínimo ~88 KB) com a câmera ativa;
-- ~10 fps, JPEG de ~20–22 KB;
-- `/snapshot` completo e `/video` MJPEG validados no browser;
-- OTA via `/update` validado.
+- Soak de 10 min: sem reboot, câmera ONLINE o tempo todo, 601→6103 frames
+  (~9,6 fps médio), heap estável.
+- Sem cliente MJPEG: ~10 fps, heap ~87 KB livre.
+- Com 1 cliente MJPEG: ~7,7 fps, heap ~70–77 KB livre (mínimo ~50 KB).
+- Câmera nativa medida pelo Linux (`linux/session`): ~11,9 fps (358 frames/30 s).
+  O C3 fica ~12% abaixo sem cliente; a diferença é compatível com perda de
+  pacotes UDP e CPU single-core.
+- JPEG de ~18–22 KB; `/snapshot` completo e `/video` MJPEG validados.
+- OTA via `/update`, `/reboot` e save de config validados. `/reset` não testado
+  para não derrubar WiFi/config.
+- Os ~16 fps do documento original não se reproduziram nesta câmera; o modo
+  atual entrega ~12 fps.
