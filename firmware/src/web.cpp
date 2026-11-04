@@ -76,6 +76,10 @@ static bool hex_decode(const String& hex, uint8_t* out, size_t max,
   return true;
 }
 
+static void schedule_restart(uint32_t delay_ms) {
+  g_restart_at = millis() + delay_ms;
+}
+
 static String html_page(const String& title, const String& body,
                         bool refresh) {
   String h;
@@ -275,8 +279,7 @@ static void handle_config(AsyncWebServerRequest* request) {
   request->send(200, "text/html",
                 "<meta http-equiv='refresh' content='2; url=/'>"
                 "<html><body><p>Config salva. Reiniciando...</p></body></html>");
-  delay(1000);
-  ESP.restart();
+  schedule_restart(1500);
 }
 
 static void handle_discover(AsyncWebServerRequest* request) {
@@ -360,8 +363,7 @@ static void handle_assign(AsyncWebServerRequest* request) {
   request->send(200, "text/html",
                 "<meta http-equiv='refresh' content='2; url=/'>"
                 "<html><body><p>Camera atribuida. Reiniciando...</p></body></html>");
-  delay(1000);
-  ESP.restart();
+  schedule_restart(1500);
 }
 
 static void handle_info(AsyncWebServerRequest* request) {
@@ -392,7 +394,16 @@ static void handle_reboot(AsyncWebServerRequest* request) {
   request->send(200, "text/html",
                 "<meta http-equiv='refresh' content='5; url=/'>"
                 "<html><body><p>Reiniciando...</p></body></html>");
-  delay(1000);
+  schedule_restart(1500);
+}
+
+static void factory_reset_task(void* arg) {
+  (void)arg;
+  vTaskDelay(pdMS_TO_TICKS(1500));
+  LittleFS.format();
+  default_eeprom();
+  save_eeprom();
+  wm.resetSettings();
   ESP.restart();
 }
 
@@ -400,12 +411,7 @@ static void handle_reset(AsyncWebServerRequest* request) {
   request->send(200, "text/html",
                 "<meta http-equiv='refresh' content='5; url=/'>"
                 "<html><body><p>Resetando para padroes de fabrica...</p></body></html>");
-  LittleFS.format();
-  default_eeprom();
-  save_eeprom();
-  wm.resetSettings();
-  delay(1000);
-  ESP.restart();
+  xTaskCreate(factory_reset_task, "factory_reset", 4096, NULL, 1, NULL);
 }
 
 static void handle_not_found(AsyncWebServerRequest* request) {

@@ -20,7 +20,7 @@ void mqtt_publish_status() {
 
   String ip = WiFi.localIP().toString();
   publish_retained(topic("DESCRIPTION"),
-                   String(DEFAULT_DEVICE_NAME) + " " + String(VERSION));
+                   String(eeprom.device_name) + " " + String(VERSION));
   publish_retained(topic("IP"), ip);
   publish_retained(topic("STATUS"), "ONLINE");
   publish_retained(topic("ADMIN"), "http://" + ip + "/");

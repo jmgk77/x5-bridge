@@ -26,3 +26,5 @@
 #include "stream.h"
 #include "version.h"
 #include "web.h"
+
+extern volatile uint32_t g_restart_at;

@@ -36,7 +36,7 @@ static void send_all_close_on_fail(int fd, const void* data, size_t len,
   if (!*ok) return;
   const uint8_t* p = (const uint8_t*)data;
   while (len > 0) {
-    ssize_t n = send(fd, p, len, MSG_DONTWAIT | MSG_NOSIGNAL);
+    ssize_t n = send(fd, p, len, MSG_NOSIGNAL);
     if (n <= 0) {
       *ok = false;
       return;
@@ -134,8 +134,12 @@ static void handle_request(StreamClient& c) {
 static void handle_client_readable(StreamClient& c) {
   if (c.streaming) {
     char tmp[64];
-    int n = recv(c.fd, tmp, sizeof(tmp), 0);
-    if (n <= 0) close_client(c);
+    int n = recv(c.fd, tmp, sizeof(tmp), MSG_DONTWAIT);
+    if (n == 0) {
+      close_client(c);
+    } else if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+      close_client(c);
+    }
     return;
   }
 
@@ -145,8 +149,13 @@ static void handle_client_readable(StreamClient& c) {
     return;
   }
 
-  int n = recv(c.fd, c.req + c.req_len, room, 0);
-  if (n <= 0) {
+  int n = recv(c.fd, c.req + c.req_len, room, MSG_DONTWAIT);
+  if (n == 0) {
+    close_client(c);
+    return;
+  }
+  if (n < 0) {
+    if (errno == EAGAIN || errno == EWOULDBLOCK) return;
     close_client(c);
     return;
   }
@@ -168,8 +177,10 @@ static void accept_client(int slot) {
     int fd = accept(listen_fds[slot], (struct sockaddr*)&cli, &clen);
     if (fd < 0) return;
 
-    int flags = fcntl(fd, F_GETFL, 0);
-    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    struct timeval tv;
+    tv.tv_sec = 1;
+    tv.tv_usec = 0;
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 
     int free_idx = -1;
     for (int i = 0; i < MAX_CLIENTS_TOTAL; i++) {

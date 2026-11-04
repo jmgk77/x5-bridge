@@ -1,5 +1,7 @@
 #include "main.h"
 
+volatile uint32_t g_restart_at = 0;
+
 void setup() {
   Serial.begin(115200);
   delay(1000);
@@ -24,5 +26,10 @@ void setup() {
 void loop() {
   handle_web();
   handle_mqtt();
+
+  if (g_restart_at != 0 && millis() >= g_restart_at) {
+    ESP.restart();
+  }
+
   vTaskDelay(pdMS_TO_TICKS(10));
 }
