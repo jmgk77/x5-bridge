@@ -16,8 +16,8 @@ O firmware entrega:
 
 ## Status
 
-- Firmware validado em **ESP32-C3** (v0.1.10), **ESP32-S3** (v0.1.13),
-  **ESP32-CAM** (v0.1.25) e **ESP32 DevKit** (v0.1.23) com a câmera
+- Firmware validado em **ESP32-C3** (v0.1.10), **ESP32-S3** (v0.1.27),
+  **ESP32-CAM** (v0.1.26) e **ESP32 DevKit** (v0.1.23) com a câmera
   `BATE558596HDLZB` em `192.168.0.10`.
 - C3: heap ~87 KB livre, ~10 fps sem cliente e ~7,7 fps com 1 cliente.
 - S3: 2 MB de PSRAM ativa, heap ~204 KB livre, buffers de frame na PSRAM e
@@ -26,6 +26,12 @@ O firmware entrega:
   ~158 KB, buffers na PSRAM; ~7,7 fps sem cliente e ~6,8 fps com 1 cliente.
 - ESP32 DevKit (sem PSRAM): heap ~161 KB ocioso / ~107 KB com câmera; ~5,9 fps
   sem cliente e ~4,3 fps com 1 cliente.
+- Teste com **2 câmeras**: no ESP32-CAM as duas funcionam, mas o rádio clássico
+  satura (CAM0 4,07/2,03 fps; CAM1 6,73/6,13 fps ocioso/cliente). No S3, a
+  CAM1 (`.71`) funcionou bem; a CAM0 (`.10`) ficou ONLINE com ticket mas 0
+  frames, exigindo power-cycle/sequência limpa.
+- A antena externa do ESP32-CAM não melhorou o RSSI no teste (-58/-61 dBm);
+  provavelmente a seleção PCB/externa não está ativa.
 - O S3 ficou com RSSI ~-64/-65 dBm contra ~-50 dBm do C3; o FPS ficou limitado
   pelo WiFi, não por CPU/RAM. O ESP32-CAM/DevKit usam o rádio ESP32 clássico e
   ficam naturalmente abaixo de C3/S3.
@@ -34,7 +40,9 @@ O firmware entrega:
 - Soak de 10 min no C3 sem reboot e com a câmera online o tempo todo; não
   repetido nos demais.
 - `/reset` não testado para não apagar WiFi/config.
-- Segunda câmera simultânea não testada (só havia uma câmera disponível).
+- Teste de 2 câmeras feito no ESP32-CAM e parcialmente no S3; ver detalhes
+  abaixo. A câmera `.10` pode ficar ONLINE com ticket e 0 frames após trocas de
+  bridge; power-cycle e re-login limpo resolvem.
 
 ## Mapa do repositório
 
@@ -165,7 +173,7 @@ Detalhes de build, endpoints, memória e limitações estão em
 | `/reboot` | OK | OK | OK | OK |
 | Soak de 10 min | OK | não repetido | não repetido | não repetido |
 | `/reset` | não testado | não testado | não testado | não testado |
-| 2 câmeras simultâneas | não testado | não testado | não testado | não testado |
+| 2 câmeras simultâneas | não testado | parcial (CAM1 OK; CAM0 travou) | OK (baixo FPS) | não testado |
 
 Medições com uma câmera:
 
@@ -179,6 +187,11 @@ Medições com uma câmera:
 - **ESP32 DevKit** (RSSI ~-48 dBm): ~5,9 fps sem cliente; ~4,3 fps com 1
   cliente; heap ~161 KB ocioso / ~107 KB com câmera (mín. ~86 KB), buffers na
   RAM interna;
+- **2 câmeras** no ESP32-CAM (RSSI ~-57/-58): CAM0 4,07 fps ocioso / 2,03 com
+  cliente; CAM1 6,73 / 6,13; heap ~148 KB (mín. ~115 KB), PSRAM ~2,0 MB;
+- **2 câmeras** no S3: CAM1 `.71` ~9–15 fps inicial; CAM0 `.10` ONLINE com
+  0 frames (sessão travada);
+- antena externa do ESP32-CAM: RSSI não melhorou (-58/-61 dBm);
 - JPEG de ~18–22 KB; soak de 10 min no C3 com ~9,6 fps médio.
 
 Os ~16 fps do documento original não se reproduziram nesta câmera; o modo atual
@@ -192,9 +205,15 @@ clássico limita o FPS; a PSRAM do CAM ajuda a memória, mas não o rádio.
 - `/reset` não testado para não derrubar a configuração atual.
 - Reconexão após queda de energia da câmera não foi testada explicitamente; o
   firmware tem timeout e relogin.
-- Segunda câmera real não testada. Limite: C3=2, S3=4, CAM=2, DevKit=1;
-  cada stream aceita 2 clientes. Com 1 câmera + 1 cliente o C3 fica com
-  ~50 KB mínimos; a segunda câmera só inicia se a alocação couber.
+- Teste com 2 câmeras: ESP32-CAM funcional mas com FPS baixo (rádio clássico);
+  S3 parcial (CAM1 `.71` OK, CAM0 `.10` travou). Limite: C3=2, S3=4, CAM=2,
+  DevKit=1; cada stream aceita 2 clientes. Com 1 câmera + 1 cliente o C3 fica
+  com ~50 KB mínimos.
+- Câmera `.10` pode ficar ONLINE (com ticket) e **0 frames** após trocas de
+  bridge; power-cycle e re-login limpo resolvem. A `.71` também precisou de
+  power-cycle uma vez.
+- Antena externa do ESP32-CAM: RSSI não melhorou (-58/-61); verificar seleção
+  PCB/externa.
 - O broker em `192.168.0.250` não preserva `retained`; se isso for necessário,
   trocar/ajustar o broker.
 - FPS abaixo do documentado originalmente (~12 fps nativos nesta câmera).

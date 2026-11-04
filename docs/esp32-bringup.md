@@ -272,5 +272,7 @@ PSRAM de 2 MB e o dual-core ficaram ativos, mas o RSSI no teste ficou
 ~-64/-65 dBm contra ~-50 dBm do C3; o FPS foi limitado pelo WiFi. As três
 ESP32-CAM foram comparadas em [`esp32cam-boards.md`](esp32cam-boards.md); a
 board com a câmera quebrada foi usada como bridge (a câmera onboard não é
-usada). Medições, limites e pendências estão em
+usada). No teste com duas câmeras, o ESP32-CAM funcionou mas com FPS baixo; no
+S3 a CAM1 (`.71`) funcionou e a CAM0 (`.10`) ficou ONLINE com ticket e 0 frames.
+Medições, limites e pendências estão em
 [`firmware/README.md`](../firmware/README.md).

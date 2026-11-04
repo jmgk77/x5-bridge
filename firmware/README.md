@@ -222,7 +222,7 @@ Executada com a câmera `BATE558596HDLZB` em `192.168.0.10`:
 | `/reboot` | OK | OK | OK | OK |
 | Soak 10 min | OK, sem reboot | não repetido | não repetido | não repetido |
 | `/reset` | não testado | não testado | não testado | não testado |
-| 2 câmeras | não testado | não testado | não testado | não testado |
+| 2 câmeras | não testado | parcial (CAM1 OK; CAM0 travou) | OK (baixo FPS) | não testado |
 
 Medições:
 
@@ -235,6 +235,11 @@ Medições:
   heap ~158 KB livre e PSRAM ~2,05 MB;
 - ESP32 DevKit (RSSI ~-48 dBm): ~5,9 fps sem cliente; ~4,3 fps com 1 cliente;
   heap ~161 KB ocioso / ~107 KB com câmera (mín. ~86 KB);
+- 2 câmeras no ESP32-CAM (RSSI ~-57/-58): CAM0 4,07/2,03 fps e CAM1
+  6,73/6,13 fps (ocioso/1 cliente); heap ~148 KB (mín. ~115 KB), PSRAM ~2 MB;
+- 2 câmeras no S3: CAM1 `.71` ~9–15 fps inicial; CAM0 `.10` ONLINE com 0
+  frames (sessão travada);
+- antena externa do ESP32-CAM: RSSI não melhorou (-58/-61 dBm);
 - JPEG ~18–22 KB;
 - soak no C3: 601→6103 frames (~9,6 fps médio), heap estável.
 
@@ -248,8 +253,14 @@ FPS; a PSRAM do CAM ajuda a memória, mas não o rádio.
 - Admin/OTA abertos, sem autenticação (decisão de projeto; LAN).
 - `/reset` implementado, mas não testado em produção.
 - Reconexão após queda de energia da câmera não foi testada explicitamente.
-- Segunda câmera real não testada. Limite: C3=2, S3=4, CAM=2, DevKit=1; cada
-  stream aceita 2 clientes.
+- Teste com 2 câmeras: ESP32-CAM funcional mas com FPS baixo (rádio clássico);
+  S3 parcial (CAM1 `.71` OK, CAM0 `.10` travou). Limite: C3=2, S3=4, CAM=2,
+  DevKit=1; cada stream aceita 2 clientes.
+- Câmera `.10` pode ficar ONLINE com ticket e **0 frames** após trocas de
+  bridge; power-cycle e re-login limpo resolvem. A `.71` também precisou de
+  power-cycle uma vez.
+- Antena externa do ESP32-CAM: RSSI não melhorou (-58/-61); verificar seleção
+  PCB/externa.
 - Broker sem `retained` no teste.
 - FPS abaixo do documentado originalmente (~12 fps nativos nesta câmera).
 - S3 testado com RSSI ~-64/-65 dBm contra ~-50 dBm do C3; o FPS ficou limitado
@@ -280,6 +291,13 @@ FPS; a PSRAM do CAM ajuda a memória, mas não o rádio.
 - **ESP32-CAM reinicia/boot loop**: confira o flat/ribbon da câmera onboard e a
   alimentação 5 V; o bridge não usa a câmera onboard. Veja
   [`../docs/esp32cam-boards.md`](../docs/esp32cam-boards.md).
+- **Câmera ONLINE com 0 frames**: sessão de vídeo travada; power-cycle na
+  câmera e, se possível, desabilite/reative o slot depois que ela responder ao
+  `discover`.
+- **Duas câmeras no ESP32-CAM**: funciona, mas o rádio clássico satura; o FPS
+  total fica ~1 câmera e a CAM0 cai mais com cliente.
+- **Antena externa no ESP32-CAM**: se o RSSI não mudar, confira a seleção
+  PCB/externa (jumper/resistor) e o contato do u.FL.
 - **Não rode `linux/serve`/`linux/session` junto com o bridge**: a câmera atende
   uma sessão por vez.
 

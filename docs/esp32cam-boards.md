@@ -45,6 +45,34 @@ Como a câmera onboard não é usada, o defeito dela não afeta o bridge. Se a
 board voltar a resetar, o primeiro suspeito é o módulo/flat da câmera ou a
 alimentação 5 V.
 
+## Teste com duas câmeras (bridge na board 3)
+
+- CAM0 `.10` (`BATE558596HDLZB`) e CAM1 `.71` (`BATE583547ANCGG`) online ao
+  mesmo tempo; `/snapshot` válido nas portas 8080 e 8081; MQTT com `CAM0/...`
+  e `CAM1/...`.
+- PSRAM ~2,0 MB livre após os 4 buffers (96 KB); heap ~148 KB (mín. ~115 KB
+  com 1 cliente em cada).
+- FPS em 30 s:
+  - ocioso: CAM0 4,07; CAM1 6,73;
+  - com 1 cliente por câmera: CAM0 2,03; CAM1 6,13.
+- Conclusão: o ESP32 clássico satura; o throughput total fica parecido com o
+  de 1 câmera e a CAM0 cai mais com cliente. A CAM1 se recuperou com
+  power-cycle; a CAM0 (`.10`) voltou a ficar ONLINE com ticket e 0 frames.
+
+## Antena externa
+
+- A antena externa foi conectada/movida, mas o RSSI ficou em -58/-60/-61 dBm,
+  sem melhora. Provavelmente a seleção PCB/externa não está ativa ou o u.FL não
+  está fazendo contato. O rádio clássico continua sendo o limitador.
+
+## S3 com duas câmeras (parcial)
+
+- CAM1 `.71` funciona bem (~9–15 fps inicial).
+- CAM0 `.10` fica ONLINE com ticket e 0 frames; o S3 em si está saudável
+  (heap ~206 KB, PSRAM 2 MB, RSSI -54/-56).
+- O problema está na `.10`/sessão, não no S3. O teste completo das duas no S3
+  ficou pendente.
+
 ## Links
 
 - [`../firmware/README.md`](../firmware/README.md) — firmware e alvos.
