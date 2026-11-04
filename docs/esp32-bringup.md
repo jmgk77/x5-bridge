@@ -1,5 +1,10 @@
 # Bring-up ESP32 (C3 e S3) — medições e decisões
 
+> **Status:** o port foi implementado em [`firmware/`](../firmware/); este
+> documento registra o bring-up e as medições de hardware que embasaram a
+> escolha do alvo. Para build, configuração e limitações do firmware final, veja
+> [`firmware/README.md`](../firmware/README.md).
+
 Registro do que foi executado para validar a viabilidade do port do bridge X5.
 Serve para não refazer a investigação nem perder as configurações que funcionaram.
 
@@ -254,3 +259,10 @@ Arduino funciona, mas o core instalado usa **IDF 4.4.7**.
   `esptool` (`v0.2`): usar o valor do esptool como referência.
 - Medições de heap foram feitas **sem associar ao AP**; após conexão WiFi real,
   esperar uma queda adicional (fila/associação) e revalidar com a câmera.
+
+## Status final
+
+O alvo escolhido foi o **ESP32-C3**. O firmware final está em
+[`firmware/`](../firmware/) e foi validado com uma câmera X5: discovery, MJPEG,
+snapshot, MQTT, OTA, `/config` e `/reboot`. Medições, limites e pendências estão
+em [`firmware/README.md`](../firmware/README.md).

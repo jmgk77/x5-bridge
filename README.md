@@ -1,479 +1,89 @@
-# Protocolo da câmera X5 (YunSync / 2BK-2) — engenharia reversa
-
-Documentação do protocolo P2P usado por câmeras X5 (marca YsxLite), baseada em:
-
-- Engenharia reversa do app Android (`DavidVentura/cam-reverse`)
-- Capturas PCAPdroid do app oficial (sessão funcionando)
-- Capturas tcpdump da reimplementação em TypeScript
-- Reimplementação em C++ (`linux/serve.cpp`, este repo)
-
-Tudo aqui foi **observado empiricamente**. Campos marcados com `?` são
-desconhecidos mas funcionam como constante; campos sem `?` foram decodificados
-com certeza.
-
-## Arquitetura
-
-~~~
-Câmera X5 (192.168.0.10:32108 UDP) <---> Cliente (Linux, ESP32, ...)
-~~~
-
-Todo o tráfego é **UDP**. A câmera escuta na porta 32108. O cliente usa uma
-porta efêmera qualquer. Não há TCP, TLS, RTP, RTSP. A "criptografia" é uma
-transformação trivial de bytes (ver seção XqBytesEnc).
-
-Um "frame" de vídeo no ar (~16 KB de JPEG) é fragmentado em ~25 pacotes UDP
-de 1032 bytes cada. ~16 fps → ~400 pacotes/s de mídia.
-
-## Fluxo completo
-
-~~~
-Cliente                                Câmera
-  |--- LanSearch (4B) ---------------->|
-  |<-- PunchPkt (24B) -----------------|
-  |--- P2pRdy (24B, echo) -------------|
-  |<-- P2pRdy (24B) -------------------|
-  |--- Drw login (180B) ---------------|
-  |<-- DrwAck id=0 --------------------|
-  |<-- Drw ConnectUserAck (28B) -------|  ticket extraído aqui (offset 24-27 pós-decrypt)
-  |--- Drw VideoParamSet (28B) ------->|
-  |--- Drw StartVideo (20B) ---------->|  (enviados em sequência, sem esperar ACK)
-  |<-- DrwAck id=1 --------------------|  (ack do VPS)
-  |<-- DrwAck id=2 --------------------|  (ack do SV)
-  |<-- Drw cmd=0x1831 (VPS ack) -------|  (stream=0)
-  |--- DrwAck id=1 ------------------->|
-  |<-- Drw cmd=0x1031 (SV ack) --------|  (stream=0)
-  |--- DrwAck id=2 ------------------->|
-  |                                    |
-  |<== Drw stream=1 (mídia) ===========|  JPEGs continuamente
-  |--- DrwAck ------------------------>|  para cada pacote recebido
-  |                                    |
-  |--- P2PAlive ---------------------->|  (keepalive ~1 Hz)
-  |<-- P2PAlive -----------------------|
-  |--- P2PAliveAck ------------------->|
-~~~
-
-## 1. Discovery
-
-### LanSearch (cliente → câmera)
-
-4 bytes, sem header:
-
-~~~
-f1 30 00 00
-~~~
-
-### PunchPkt (câmera → cliente)
-
-24 bytes. Identifica a câmera e seu número de série:
-
-~~~
-f1 41 00 14 42 41 54 45 00 00 00 00 00 08 86 04 48 44 4c 5a 42 00 00 00
-      ^^^^^ ^^^^^ ^^^^^^^^^^^^^^^^^^^^ ^^^^^^^^^^^^^^^^^^^
-      len=20 "BATE" (serial)          "HDLZB" (modelo/sufixo)
-~~~
-
-- O serial completo é `BATE558596HDLZB` (16 bytes após `f1 41 00 14`)
-- Bytes `00 00 00 08 86 04` no meio são desconhecidos mas constantes por câmera
-- O nome do dispositivo é "BATE" + sufixo
-
-## 2. Handshake
-
-### P2pRdy (cliente → câmera)
-
-Echo do PunchPkt com **um byte alterado** (byte[1] de `0x41` → `0x42`):
-
-~~~
-f1 42 00 14 42 41 54 45 ... (mesmos 24 bytes, só o 0x41 vira 0x42)
-~~~
-
-A câmera responde com um `P2pRdy` próprio (mesmo formato, também `f1 42...`).
-Após isso, a câmera está pronta para receber o login.
-
-### Keepalive
-
-- **P2PAlive**: `f1 e0 00 00` — câmera manda a cada ~1s. Cliente responde.
-- **P2PAliveAck**: `f1 e1 00 00` — resposta ao P2PAlive.
-
-Se o cliente não responde em ~3s, a câmera encerra a sessão.
-
-## 3. Header Drw (comum a todos os comandos de controle)
-
-Todo Drw tem a mesma estrutura de 20 bytes de header:
-
-~~~
-offset  size  nome            notas
-------  ----  --------------  -------------------------------------------
-0       2     hdr             sempre f1 d0
-2       2     length          BE; tamanho total do pacote - 4
-4       1     param           sempre d1 (unlocked)
-5       1     stream          0 = controle, 1 = mídia
-6       2     id              BE; ID do comando (incremental por sessão)
-8       2     start_cmd       sempre 11 0a
-10      2     command         BE; código do comando (ver tabela)
-12      2     payload_len     u16_swap(4 + data_len); ver nota
-14      2     cc_dest         BE; destino (ver tabela de comandos)
-16      4     ticket          4 bytes; zeros até receber ConnectUserAck
-20      ...   data            payload específico do comando
-~~~
-
-**Nota sobre payload_len**: o valor é `u16_swap(4 + data_len)` onde `4` são os
-bytes do ticket. Ex: para VPS com 8 bytes de data, payload_len = 12, gravado
-como `0c 00`.
-
-**Tabela de comandos** (campo `command`):
-
-| Comando          | Valor   | cc_dest |
-|------------------|---------|---------|
-| ConnectUser      | `20 10` | `ff 00` |
-| ConnectUserAck   | `20 11` | `ff 00` |
-| VideoParamSet    | `18 30` | `00 00` |
-| VideoParamSetAck | `18 31` | `00 00` |
-| StartVideo       | `10 30` | `00 00` |
-| StartVideoAck    | `10 31` | `00 00` |
-| (outros acks)    | `18 32`, `10 32` | `00 00` |
-
-Os comandos `*Ack` (`0x2011`, `0x1831`, `0x1031`) vêm **da câmera para o
-cliente**, não o contrário.
-
-## 4. Login (ConnectUser)
-
-### Drw de login (cliente → câmera)
-
-**Pacote de 180 bytes totais**, verificado empiricamente. Estrutura:
-
-- Header Drw (20B): `f1 d0 00 b0 d1 00 <id:2> 11 0a 20 10 a4 00 ff 00`
-- Ticket (4B): `00 00 00 00` (zeros — o login não usa ticket)
-- Payload (160B): fixo, **copiado verbatim do app YsxLite**
-
-Hex completo (que funciona como login):
-
-~~~
-f1d000b0d1000000110a2010a400ff00000000006f0101010101010101010101010101
-01010101010101010101010101010160656c686f010101010101010101010101010101
-0101010101010101010101010101010101010101010101010101010101010101010101
-0101010101010101010101010101010101010101010101010101010101010101010101
-0101010101010101010101010101010101010101010101010101010101010101010101
-0101010101010101010101010101010101010101010101010101010101010101010101
-0101010101010101010101010101010101010101010101010101010101010101010101
-01010101010160656c68
-~~~
-
-**Importante**: o comando `SendUsrChk` do `cam-reverse` (que produz um Drw de
-56 bytes com "admin"+"admin" encriptado) **NÃO funciona** com a X5. A câmera
-aceita (manda Ack), mas não entra em modo de streaming contínuo. O app oficial
-manda 180 bytes com muito mais informação (device ID, versão, nonce,
-capacidades) — o payload acima é o capturado do app e funciona. Se o payload
-for idêntico entre sessões, ele pode ser hardcoded (foi o que fizemos).
-
-### DrwAck (câmera → cliente) — ack do login
-
-32 bytes:
-
-~~~
-f1 d1 00 06 d2 00 00 01 00 00 00 00 ...
-^^^^ ^^^^^ ^^ ^^ ^^^^^ ^^^^^ ^^^^^
-DrwAck len stream item=1 pkt_id=0 (id do Drw sendo ackado, BE)
-~~~
-
-**Atenção ao offset do pkt_id**: no Drw normal, o id está em [6..7]. No
-DrwAck, o id está em **[8..9]** (porque [6..7] é `item_count = 1`). É fácil
-inverter.
-
-### ConnectUserAck (câmera → cliente) — 28 bytes, contém o ticket
-
-Header Drw (20B) + 8 bytes de payload **encriptado**. Após decrypt:
-
-~~~
-offset  size  conteúdo
-------  ----  -------------------------------------
-20      4     status / não usado
-24      4     TICKET  <-- o que precisamos
-~~~
-
-O código de extração (após XqBytesDec no payload de 8 bytes):
-
-~~~c
-int payload_len = (buf[12] | (buf[13] << 8));  // LE (!)
-int dec_len = payload_len - 4;
-if (dec_len > 0) xq_dec(buf + 20, dec_len, 4);
-memcpy(ticket, buf + 24, 4);
-~~~
-
-**O ticket muda a cada sessão** (é gerado pela câmera), então tem que ser
-extraído a cada login. Uma vez extraído, ele é usado em **todos** os Drws
-subsequentes (VPS, SV).
-
-## 5. XqBytesEnc / XqBytesDec — a "criptografia"
-
-Não é criptografia de verdade. São duas operações:
-
-1. **Inverter o bit 0** de cada byte: ímpar → subtrai 1, par → soma 1
-2. **Rotacionar** o buffer por N bytes (N=4 é o único valor usado)
-
-~~~c
-// Encripta in-place (usado em payloads que ENVIAMOS)
-void xq_enc(uint8_t* buf, int len, int rot) {
-    uint8_t* nb = malloc(len);
-    for (int i = 0; i < len; i++) nb[i] = (buf[i] & 1) ? (buf[i]-1) : (buf[i]+1);
-    for (int i = 0; i < len-rot; i++) buf[i] = nb[i+rot];      // rotação "para a esquerda"
-    for (int i = 0; i < rot; i++) buf[len-rot+i] = nb[i];
-    free(nb);
-}
-
-// Decripta in-place (usado em payloads que RECEBEMOS)
-void xq_dec(uint8_t* buf, int len, int rot) {
-    uint8_t* nb = malloc(len);
-    for (int i = 0; i < len; i++) nb[i] = (buf[i] & 1) ? (buf[i]-1) : (buf[i]+1);
-    for (int i = rot; i < len; i++) buf[i] = nb[i-rot];        // rotação "para a direita"
-    for (int i = 0; i < rot; i++) buf[i] = nb[len-rot+i];
-    free(nb);
-}
-~~~
-
-Atenção: a inversão de bit é a **mesma** nas duas operações. A única diferença
-é o sentido da rotação. Cuidado ao copiar de outra fonte — algumas
-implementações rotacionam ao contrário e viram lixo.
-
-## 6. VideoParamSet + StartVideo
-
-Ambos usam o **ticket** extraído do ConnectUserAck. Devem ser enviados **em
-sequência imediata** (sem esperar Ack entre eles) — é o que o app oficial faz.
-
-### VideoParamSet (cliente → câmera) — 28 bytes
-
-~~~
-f1 d0 00 18 d1 00 <id:2> 11 0a 18 30 0c 00 00 00 <ticket:4> <payload:8>
-^^^^ ^^^^^                            ^^^^^ ^^^^^ ^^^^^^^^^^^ ^^^^^^^^^^
-hdr  len=24                           plen  cc=0    ticket      payload
-~~~
-
-**id** = 1 (o primeiro id após o ConnectUserAck)
-**payload** (8 bytes, antes do encrypt): `01 00 00 00 02 00 00 00`
-
-Significado: `[resolution_id=1 (640x480), ...?, value=2]`. Para 320x240, use
-`01 00 00 00 01 00 00 00` (ver tabela em `impl.ts` do cam-reverse).
-
-O payload **deve ser encriptado** com `xq_enc(payload, 8, 4)` antes de ir no
-pacote. No ar, o payload (após ticket) é: `03 01 01 01 00 01 01 01`.
-
-### StartVideo (cliente → câmera) — 20 bytes
-
-~~~
-f1 d0 00 10 d1 00 <id:2> 11 0a 10 30 04 00 00 00 <ticket:4>
-^^^^ ^^^^^                            ^^^^^ ^^^^^ ^^^^^^^^^
-hdr  len=16                           plen=4 cc=0    ticket
-~~~
-
-**id** = 2. **Sem payload** (payload_len=4 é só o ticket).
-
-### Acks da câmera
-
-Em resposta, a câmera manda dois pacotes stream=0:
-
-~~~
-DrwAck id=1          (ack do VideoParamSet)
-DrwAck id=2          (ack do StartVideo)
-Drw cmd=0x1831       (VideoParamSet ack; stream=0)
-Drw cmd=0x1031       (StartVideo ack; stream=0)
-~~~
-
-O cliente **deve ACKar todos**, inclusive os dois `cmd=0x18xx/0x10xx` (não são
-DrwAcks, são Drws normais). Após esse ciclo, a câmera começa a mandar
-`stream=1`.
-
-## 7. Mídia (stream=1)
-
-### Formato dos pacotes
-
-~~~
-offset  size  conteúdo
-------  ----  --------------------------------------------------
-0       2     f1 d0
-2       2     length
-4       1     d1
-5       1     01  (stream=1)
-6       2     id (BE, incremental)
-8       4     magic: 55 aa 15 a8 (se "framed") OU dado cru
-~~~
-
-Existem **dois tipos** de pacote de mídia:
-
-#### Pacote "framed" (início de bloco)
-
-~~~
-offset  size  conteúdo
-------  ----  --------------------------------------------------
-8       4     55 aa 15 a8  (magic)
-12      1     tipo: 03 = vídeo, 06 = áudio
-13      ...   metadata (não decodificado)
-~~~
-
-Aparecem tipicamente com tamanho 36-40 bytes. O tipo=03 precede cada JPEG novo,
-o tipo=06 precede cada chunk de áudio.
-
-**Não** contribuem bytes para o JPEG — o JPEG começa no próximo pacote.
-
-#### Pacote "raw" (dados de mídia)
-
-~~~
-offset  size  conteúdo
-------  ----  --------------------------------------------------
-8       ...   dados crus (para vídeo: bytes do JPEG, começando com ff d8 no 1º pacote)
-~~~
-
-Tamanho típico: 1000-1032 bytes. Devem ser concatenados para montar o JPEG.
-
-### Montagem de um frame
-
-~~~
-para cada pacote stream=1:
-    se tem magic e tipo=03:
-        # novo frame começou
-        se buffer_atual tem ffd8 (SOI) e ff d9 (EOI) no final:
-            emite buffer_atual como JPEG
-        buffer_atual = vazio
-        # não adiciona nada do pacote framed
-    senão se tem magic e tipo=06:
-        # áudio, ignora
-        continue
-    senão (raw):
-        buffer_atual += bytes[8:]
-~~~
-
-O JPEG termina com `ff d9` (marcador EOI). Devido a padding, é comum que o
-último pacote tenha bytes extras após o `ff d9` — o código que funciona
-**trunca no último `ff d9`** antes de emitir:
-
-~~~c
-int end = -1;
-for (int i = 0; i < len-1; i++) if (buf[i]==0xff && buf[i+1]==0xd9) end = i;
-if (end > 0) emit(buf, end + 2);   // inclusivo
-~~~
-
-### Métricas observadas
-
-- **FPS**: ~16 fps (640x480)
-- **Tamanho do JPEG**: 14-18 KB por frame (média ~16 KB)
-- **Pacotes por frame**: ~25 (24 data + 1 framed)
-- **Taxa UDP**: ~400 pacotes/s
-- **Throughput**: ~260 KB/s de vídeo
-
-## 8. Notas para port ESP32
-
-- **Sockets**: usar `lwip_*` (API POSIX-like do ESP-IDF). `recvfrom`/`sendto`
-  funcionam direto.
-- **Keepalive**: `P2PAlive` a cada 1s deve ser respondido em <3s. Usar
-  `esp_timer` ou uma task dedicada.
-- **HTTP MJPEG**: `esp_http_server` não tem suporte nativo a
-  `multipart/x-mixed-replace` streaming. Duas opções: (a) usar
-  `httpd_req_send_chunk()` manualmente (funciona, mas com workarounds); (b)
-  usar sockets raw TCP + parser HTTP mínimo (é o que fizemos no `linux/serve.cpp`,
-  ~80 linhas).
-- **Memória**: cada JPEG tem ~16 KB. Para buffer duplo (enquanto envia o
-  anterior, monta o próximo), reserve ~40 KB de heap. Recomendado ESP32 com
-  PSRAM para folga.
-- **Login hardcoded**: os 180 bytes do login vão em flash (`.rodata`). Não
-  tente gerar dinamicamente — o formato real é desconhecido.
-- **Não use TLS**: o protocolo é todo plaintext. O WiFi deve ser confiável
-  (rede local), o que é aceitável para uso doméstico.
-- **Banda de vídeo**: 260 KB/s × 8 = ~2 Mbps. WiFi 802.11n aguenta. Mas se a
-  câmera ficar longe do AP, perda de pacotes UDP derruba o frame inteiro —
-  implementar retry ou aceitar que alguns frames vão faltar.
-- **Descoberta**: `LanSearch` por broadcast UDP (destino
-  `255.255.255.255:32108` ou IP direto). No ESP32, `SO_BROADCAST` funciona via
-  `lwip`.
-- **C++ no ESP-IDF**: `linux/serve.cpp` usa `std::thread`/`std::mutex`/`std::vector`.
-  No ESP-IDF funciona com `CONFIG_COMPILER_CXX_EXCEPTIONS=y` e `pthread`
-  habilitado, mas a recomendação é substituir por
-  `xTaskCreate`/`xSemaphoreCreateMutex` para reduzir overhead de heap.
-
-## 9. Limitações conhecidas
-
-- **Não decodifica áudio** (o protocolo entrega, mas o formato do payload não
-  foi analisado).
-- **Não envia áudio** (o app suporta microfone no celular; não implementado).
-- **Não muda resolução** (só 640x480; o formato do VPS com outras resoluções
-  está em `impl.ts` do cam-reverse mas não testado).
-- **Não envia comandos PTZ** (pan/tilt/zoom) — existem comandos no `cam-reverse`
-  mas não fazem parte da captura usada.
-- **Login fixo**: o login de 180 bytes é do app oficial e foi copiado verbatim.
-  Se ele tiver um nonce variável por instalação/sessão, essa implementação pode
-  parar de funcionar em alguma versão do firmware da câmera. Testado em X5 com
-  firmware `BATE558596HDLZB`.
-
-## 10. Referências
-
-- [cam-reverse](https://github.com/DavidVentura/cam-reverse) — engenharia
-  reversa original do app
-- [YunSync / 2BK-2](https://github.com/DavidVentura/cam-reverse/issues) —
-  discussões sobre o protocolo
-- Capturas usadas: `~/Downloads/PCAPdroid_03_nov._17_10_12.pcap` (app Android),
-  `~/Downloads/cam-reverse-trace-*.pcap` (implementação Linux)
-
-## 11. Bring-up ESP32 (medições reais)
-
-Chip, flash, PSRAM, heap, câmera e toolchain medidos em **ESP32-C3**,
-**ESP32-S3**, **ESP32-CAM** e **ESP32 DevKit (D0WD-V3)**: ver
-[`docs/esp32-bringup.md`](docs/esp32-bringup.md) (inclui comparativo e
-recomendação). O firmware de diagnóstico reutilizável está em
-[`tools/esp-probe/`](tools/esp-probe/).
-
-## 12. Firmware ESP32-C3 (`firmware/`)
-
-Implementação final do bridge para o ESP32-C3, usando o mesmo stack dos outros
-devices da casa: `ESPAsyncWiFiManager`, `ESPAsyncWebServer`,
-`ESPAsyncHTTPUpdateServer` e `PicoMQTT`. O caminho de vídeo usa TCP raw
-(portas 8080+), separado do servidor de administração.
-
-### Estrutura
-
-```
-firmware/   projeto PlatformIO do ESP32-C3
-linux/      referência Linux (serve.cpp, session.cpp, Makefile)
-tools/      esp-probe (bring-up)
-```
-
-### Build e gravação
+# X5 Bridge (YunSync / 2BK-2)
+
+Bridge para câmeras **X5 (YsxLite)** baseado em engenharia reversa do protocolo
+P2P proprietário. O repositório reúne a documentação do protocolo, um firmware
+funcional para **ESP32-C3** e uma implementação de referência para Linux.
+
+O firmware entrega:
+
+- descoberta de câmeras na LAN;
+- login/ticket e sessão P2P contínua;
+- vídeo MJPEG em `/video` e JPEG em `/snapshot` (uma porta por câmera);
+- página web de status, configuração, descoberta, logs e OTA;
+- anúncio MQTT no padrão dos outros devices da casa;
+- mDNS (`x5bridge.local`) e portal cativo para configuração de WiFi.
+
+## Status
+
+- Firmware **v0.1.10** validado em ESP32-C3 (4 MB flash, sem PSRAM) com a câmera
+  `BATE558596HDLZB` em `192.168.0.10`.
+- Streaming MJPEG, snapshot, MQTT, OTA, `discover`, `/config` e `/reboot`
+  testados.
+- Soak de 10 min sem reboot e com a câmera online o tempo todo.
+- `/reset` não testado para não apagar WiFi/config.
+- Segunda câmera simultânea não testada (só havia uma câmera disponível).
+
+## Mapa do repositório
+
+| Caminho | Conteúdo |
+|---|---|
+| [`firmware/`](firmware/) | firmware PlatformIO do ESP32-C3 |
+| [`linux/`](linux/) | referência Linux (`serve.cpp`, `session.cpp`, `Makefile`) |
+| [`docs/protocol.md`](docs/protocol.md) | engenharia reversa completa do protocolo |
+| [`docs/esp32-bringup.md`](docs/esp32-bringup.md) | medições de hardware e bring-up |
+| [`tools/esp-probe/`](tools/esp-probe/) | firmware de diagnóstico reutilizável |
+| [`firmware/README.md`](firmware/README.md) | build, configuração, endpoints e arquitetura |
+| [`linux/README.md`](linux/README.md) | como compilar e usar a referência Linux |
+
+## Quick start
+
+### 1. Build e gravação
 
 ```bash
 ~/.platformio/penv/bin/pio run -d firmware
 ~/.platformio/penv/bin/pio run -d firmware -t upload
 ```
 
-O firmware usa `min_spiffs.csv` (app0/app1 de 1,875 MB, LittleFS de 128 KB) e
-`/dev/ttyACM0` como porta padrão. O binário fica também em
-`firmware/firmware.bin`.
+O `platformio.ini` usa `esp32-c3-devkitm-1`, `min_spiffs.csv` e
+`/dev/ttyACM0`. Ajuste `upload_port` se o seu C3 aparecer em outro caminho.
+O binário também é copiado para `firmware/firmware.bin`.
 
-### Configuração
+### 2. Primeiro boot e WiFi
 
-- Primeiro boot: AP aberto **`x5bridge`**, portal em `http://192.168.4.1`.
-- `/config`: nome do device (raiz MQTT), broker/porta/usuário/senha e 4 slots de
-  câmera. O nome padrão é `x5bridge`.
-- `/discover`: faz `LanSearch` por broadcast e lista as câmeras encontradas para
-  atribuir a um slot.
-- Limites no código: **2 câmeras ativas** e **2 clientes por stream**; resolução
-  fixa em 640x480. Na prática, com o stack async, **1 câmera + 1 cliente** é o
-  cenário confortável no C3. A segunda câmera só inicia se houver heap; se a
-  alocação de buffers falhar, o slot fica offline.
-- Sem autenticação (uso em LAN).
+No primeiro boot o C3 sobe um AP aberto chamado **`x5bridge`**:
 
-### Endpoints
+1. conecte um celular/notebook nesse AP;
+2. abra `http://192.168.4.1`;
+3. escolha a rede WiFi, informe a senha e salve.
 
-| Porta | Caminho | Função |
-|---|---|---|
-| 80 | `/` | status (IP, heap, RSSI, câmeras, links) |
-| 80 | `/config` | configuração |
-| 80 | `/discover` | descoberta de câmeras |
-| 80 | `/update` | OTA `.bin` (multipart) |
-| 80 | `/reboot`, `/reset`, `/info`, `/logs` | manutenção |
-| 8080+ | `/video` | MJPEG contínuo |
-| 8080+ | `/snapshot` | JPEG único |
+O device reinicia, entra na rede e responde em `http://x5bridge.local/`.
+O IP também aparece na página inicial e no serial (115200).
 
-### MQTT
+### 3. Câmera
 
-Raiz = `device_name` (default `x5bridge`). Tópicos publicados a cada 5 s:
+1. abra `http://<ip-do-bridge>/discover`;
+2. o bridge faz `LanSearch` por broadcast e lista as câmeras encontradas;
+3. atribua a câmera a um slot (`CAM0` → porta 8080, `CAM1` → 8081, ...);
+4. o device reinicia e começa a sessão P2P.
 
-```
+Também é possível informar o IP manualmente em `/config`.
+
+### 4. Vídeo
+
+| URL | Formato |
+|---|---|
+| `http://<ip>:8080/video` | MJPEG contínuo |
+| `http://<ip>:8080/snapshot` | JPEG único |
+| `http://<ip>:8081/video` | segunda câmera (se configurada) |
+
+A resolução é fixa em **640x480**.
+
+### 5. MQTT
+
+O broker padrão é `192.168.0.250:1883` (configurável em `/config`). A raiz dos
+tópicos é o `device_name` (default `x5bridge`):
+
+```text
 x5bridge/DESCRIPTION   x5bridge/IP          x5bridge/STATUS
 x5bridge/ADMIN         x5bridge/MAC         x5bridge/UPTIME
 x5bridge/HEAP          x5bridge/RSSI
@@ -482,21 +92,76 @@ x5bridge/CAM0/PORT         x5bridge/CAM0/URL      x5bridge/CAM0/SNAPSHOT
 x5bridge/CAM0/CLIENTS      x5bridge/CAM0/FPS      x5bridge/CAM0/LAST_FRAME
 ```
 
-`STATUS` tem LWT `OFFLINE`. O broker em `192.168.0.250` não preserva mensagens
-retained; por isso o anúncio é repetido a cada 5 s (mesmo padrão dos outros
-devices da casa).
+O anúncio é repetido a cada 5 s; `STATUS` tem LWT `OFFLINE`. O broker usado no
+teste não preserva mensagens `retained`, por isso o período curto.
 
-### Medições no C3 (uma câmera, 640x480)
+## Arquitetura resumida
 
-- Soak de 10 min: sem reboot, câmera ONLINE o tempo todo, 601→6103 frames
-  (~9,6 fps médio), heap estável.
-- Sem cliente MJPEG: ~10 fps, heap ~87 KB livre.
-- Com 1 cliente MJPEG: ~7,7 fps, heap ~70–77 KB livre (mínimo ~50 KB).
-- Câmera nativa medida pelo Linux (`linux/session`): ~11,9 fps (358 frames/30 s).
-  O C3 fica ~12% abaixo sem cliente; a diferença é compatível com perda de
-  pacotes UDP e CPU single-core.
-- JPEG de ~18–22 KB; `/snapshot` completo e `/video` MJPEG validados.
-- OTA via `/update`, `/reboot` e save de config validados. `/reset` não testado
-  para não derrubar WiFi/config.
-- Os ~16 fps do documento original não se reproduziram nesta câmera; o modo
-  atual entrega ~12 fps.
+- **Câmera:** um socket UDP por sessão; `LanSearch` → `PunchPkt` → `P2pRdy` →
+  login → ticket → `VideoParamSet` + `StartVideo` → mídia. A sessão fica viva
+  (não há comando de stop); se ficar 5 s sem pacotes, o firmware refaz o login.
+- **Vídeo:** servidor TCP raw em 8080+ com parser HTTP mínimo. O frame JPEG é
+  montado em buffers de 24 KB e enviado com descarte/limite para cliente lento.
+- **Admin:** `ESPAsyncWebServer` na porta 80, com `ESPAsyncWiFiManager` para o
+  portal cativo, mDNS e `ESPAsyncHTTPUpdateServer` para OTA `.bin`.
+- **MQTT:** `PicoMQTT` com anúncio periódico e LWT.
+- **Persistência:** `Preferences` (NVS) para device name, broker e slots de
+  câmera; LittleFS para logs.
+
+Detalhes de build, endpoints, memória e limitações estão em
+[`firmware/README.md`](firmware/README.md).
+
+## Validação
+
+| Item | Resultado |
+|---|---|
+| Build/flash no C3 | OK |
+| WiFi + portal + mDNS | OK |
+| `discover` da câmera | OK |
+| `/video` e `/snapshot` | OK (primeiro frame completo) |
+| MQTT `x5bridge/...` | OK |
+| OTA `.bin` via `/update` | OK |
+| `/config` + reinício | OK |
+| `/reboot` | OK |
+| Soak de 10 min | OK, sem reboot |
+| `/reset` | não testado (apaga WiFi/config) |
+| 2 câmeras simultâneas | não testado (sem hardware) |
+
+Medições com uma câmera:
+
+- câmera nativa medida pelo Linux: **~11,9 fps**;
+- C3 sem cliente: **~10 fps**, heap ~87 KB livre;
+- C3 com 1 cliente MJPEG: **~7,7 fps**, heap ~70–77 KB livre (mín. ~50 KB);
+- JPEG de ~18–22 KB; soak de 10 min com ~9,6 fps médio.
+
+Os ~16 fps do documento original não se reproduziram nesta câmera; o modo atual
+entrega ~12 fps.
+
+## Limitações e pendências
+
+- Admin e OTA **sem autenticação** (decisão de projeto; uso em LAN).
+- `/reset` não testado para não derrubar a configuração atual.
+- Reconexão após queda de energia da câmera não foi testada explicitamente; o
+  firmware tem timeout e relogin.
+- Segunda câmera real não testada. O limite do código é 2 ativas e 2 clientes
+  por stream, mas com 1 câmera + 1 cliente o heap já fica apertado (~50 KB
+  mínimos); a segunda câmera só inicia se a alocação couber.
+- O broker em `192.168.0.250` não preserva `retained`; se isso for necessário,
+  trocar/ajustar o broker.
+- FPS abaixo do documentado originalmente (~12 fps nativos nesta câmera).
+
+## Documentação
+
+- [`docs/protocol.md`](docs/protocol.md) — protocolo completo (discovery,
+  handshake, login, ticket, criptografia, VPS/SV, mídia).
+- [`docs/esp32-bringup.md`](docs/esp32-bringup.md) — medições de C3/S3/CAM/DevKit
+  e decisões de port.
+- [`firmware/README.md`](firmware/README.md) — firmware.
+- [`linux/README.md`](linux/README.md) — referência Linux.
+
+## Referências
+
+- [cam-reverse](https://github.com/DavidVentura/cam-reverse) — engenharia reversa
+  original do app.
+- [YunSync / 2BK-2](https://github.com/DavidVentura/cam-reverse/issues) —
+  discussões sobre o protocolo.
