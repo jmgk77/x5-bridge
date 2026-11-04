@@ -417,3 +417,76 @@ Chip, flash, PSRAM, heap, câmera e toolchain medidos em **ESP32-C3**,
 [`docs/esp32-bringup.md`](docs/esp32-bringup.md) (inclui comparativo e
 recomendação). O firmware de diagnóstico reutilizável está em
 [`tools/esp-probe/`](tools/esp-probe/).
+
+## 12. Firmware ESP32-C3 (`firmware/`)
+
+Implementação final do bridge para o ESP32-C3, usando o mesmo stack dos outros
+devices da casa: `ESPAsyncWiFiManager`, `ESPAsyncWebServer`,
+`ESPAsyncHTTPUpdateServer` e `PicoMQTT`. O caminho de vídeo usa TCP raw
+(portas 8080+), separado do servidor de administração.
+
+### Estrutura
+
+```
+firmware/   projeto PlatformIO do ESP32-C3
+linux/      referência Linux (serve.cpp, session.cpp, Makefile)
+tools/      esp-probe (bring-up)
+```
+
+### Build e gravação
+
+```bash
+~/.platformio/penv/bin/pio run -d firmware
+~/.platformio/penv/bin/pio run -d firmware -t upload
+```
+
+O firmware usa `min_spiffs.csv` (app0/app1 de 1,875 MB, LittleFS de 128 KB) e
+`/dev/ttyACM0` como porta padrão. O binário fica também em
+`firmware/firmware.bin`.
+
+### Configuração
+
+- Primeiro boot: AP aberto **`x5bridge`**, portal em `http://192.168.4.1`.
+- `/config`: nome do device (raiz MQTT), broker/porta/usuário/senha e 4 slots de
+  câmera. O nome padrão é `x5bridge`.
+- `/discover`: faz `LanSearch` por broadcast e lista as câmeras encontradas para
+  atribuir a um slot.
+- Limites no C3: **2 câmeras ativas** e **2 clientes por stream**; resolução
+  fixa em 640x480.
+- Sem autenticação (uso em LAN).
+
+### Endpoints
+
+| Porta | Caminho | Função |
+|---|---|---|
+| 80 | `/` | status (IP, heap, RSSI, câmeras, links) |
+| 80 | `/config` | configuração |
+| 80 | `/discover` | descoberta de câmeras |
+| 80 | `/update` | OTA `.bin` (multipart) |
+| 80 | `/reboot`, `/reset`, `/info`, `/logs` | manutenção |
+| 8080+ | `/video` | MJPEG contínuo |
+| 8080+ | `/snapshot` | JPEG único |
+
+### MQTT
+
+Raiz = `device_name` (default `x5bridge`). Tópicos publicados a cada 5 s:
+
+```
+x5bridge/DESCRIPTION   x5bridge/IP          x5bridge/STATUS
+x5bridge/ADMIN         x5bridge/MAC         x5bridge/UPTIME
+x5bridge/HEAP          x5bridge/RSSI
+x5bridge/CAM0/DESCRIPTION  x5bridge/CAM0/IP       x5bridge/CAM0/STATUS
+x5bridge/CAM0/PORT         x5bridge/CAM0/URL      x5bridge/CAM0/SNAPSHOT
+x5bridge/CAM0/CLIENTS      x5bridge/CAM0/FPS      x5bridge/CAM0/LAST_FRAME
+```
+
+`STATUS` tem LWT `OFFLINE`. O broker em `192.168.0.250` não preserva mensagens
+retained; por isso o anúncio é repetido a cada 5 s (mesmo padrão dos outros
+devices da casa).
+
+### Medições no C3 (uma câmera)
+
+- heap livre ~110 KB (mínimo ~88 KB) com a câmera ativa;
+- ~10 fps, JPEG de ~20–22 KB;
+- `/snapshot` completo e `/video` MJPEG validados no browser;
+- OTA via `/update` validado.
