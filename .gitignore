@@ -1,0 +1,11 @@
+serve
+session
+discover
+frame*.jpg
+*.o
+*.pcap
+
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/

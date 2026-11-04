@@ -1,0 +1,5 @@
+.pio
+firmware.bin
+firmware.bin.gz
+include/version.h
+.vscode
