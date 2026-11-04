@@ -459,6 +459,14 @@ bool camera_frame_view(int slot, const uint8_t** ptr, size_t* len,
   return true;
 }
 
+uint32_t camera_frame_seq(int slot) {
+  if (slot < 0 || slot >= MAX_CAMERAS) return 0;
+  camera_lock();
+  uint32_t seq = sessions[slot].active ? sessions[slot].frame_seq : 0;
+  camera_unlock();
+  return seq;
+}
+
 bool camera_get_status(int slot, CameraStatus* out) {
   if (slot < 0 || slot >= MAX_CAMERAS || !out) return false;
   memset(out, 0, sizeof(*out));

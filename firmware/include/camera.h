@@ -32,6 +32,7 @@ void camera_lock();
 void camera_unlock();
 bool camera_frame_view(int slot, const uint8_t** ptr, size_t* len,
                        uint32_t* seq);
+uint32_t camera_frame_seq(int slot);
 void camera_set_clients(int slot, int n);
 
 void camera_name_from_punch(const uint8_t* punch, char* out, size_t out_size);

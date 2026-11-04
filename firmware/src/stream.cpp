@@ -30,6 +30,23 @@ struct StreamClient {
 static int listen_fds[MAX_CAMERAS];
 static int slot_clients[MAX_CAMERAS];
 static StreamClient clients[MAX_CLIENTS_TOTAL];
+static uint8_t tx_buf[MAX_JPEG_SIZE];
+
+static bool copy_frame(int slot, size_t* out_len, uint32_t* out_seq) {
+  camera_lock();
+  const uint8_t* ptr = nullptr;
+  size_t len = 0;
+  uint32_t seq = 0;
+  bool ok = camera_frame_view(slot, &ptr, &len, &seq) &&
+            len <= sizeof(tx_buf);
+  if (ok) {
+    memcpy(tx_buf, ptr, len);
+    *out_len = len;
+    *out_seq = seq;
+  }
+  camera_unlock();
+  return ok;
+}
 
 static void send_all_close_on_fail(int fd, const void* data, size_t len,
                                    bool* ok) {
@@ -101,13 +118,9 @@ static void handle_request(StreamClient& c) {
   }
 
   if (strstr(c.req, "GET /snapshot") != nullptr) {
-    const uint8_t* ptr = nullptr;
     size_t len = 0;
     uint32_t seq = 0;
-    camera_lock();
-    bool has = camera_frame_view(c.slot, &ptr, &len, &seq);
-    if (!has) {
-      camera_unlock();
+    if (!copy_frame(c.slot, &len, &seq)) {
       client_send_status(c, 503, "Service Unavailable", "no frame yet");
       return;
     }
@@ -119,8 +132,7 @@ static void handle_request(StreamClient& c) {
                       (unsigned)len);
     bool ok = true;
     send_all_close_on_fail(c.fd, hdr, (size_t)hl, &ok);
-    send_all_close_on_fail(c.fd, ptr, len, &ok);
-    camera_unlock();
+    send_all_close_on_fail(c.fd, tx_buf, len, &ok);
     close_client(c);
     return;
   }
@@ -215,35 +227,42 @@ static void send_frames() {
     }
     if (!has_stream) continue;
 
-    camera_lock();
-    const uint8_t* ptr = nullptr;
-    size_t len = 0;
-    uint32_t seq = 0;
-    bool has_frame = camera_frame_view(slot, &ptr, &len, &seq);
-
-    if (has_frame) {
-      for (int i = 0; i < MAX_CLIENTS_TOTAL; i++) {
-        StreamClient& c = clients[i];
-        if (c.fd < 0 || !c.streaming || c.slot != slot) continue;
-        if (c.last_seq == seq) continue;
-
-        char hdr[128];
-        int hl = snprintf(hdr, sizeof(hdr),
-                          "--x5frame\r\nContent-Type: image/jpeg\r\n"
-                          "Content-Length: %u\r\n\r\n",
-                          (unsigned)len);
-        bool ok = true;
-        send_all_close_on_fail(c.fd, hdr, (size_t)hl, &ok);
-        send_all_close_on_fail(c.fd, ptr, len, &ok);
-        send_all_close_on_fail(c.fd, "\r\n", 2, &ok);
-        if (ok) {
-          c.last_seq = seq;
-        } else {
-          close_client(c);
-        }
+    uint32_t current_seq = camera_frame_seq(slot);
+    bool need_frame = false;
+    for (int i = 0; i < MAX_CLIENTS_TOTAL; i++) {
+      StreamClient& c = clients[i];
+      if (c.fd >= 0 && c.streaming && c.slot == slot &&
+          c.last_seq != current_seq) {
+        need_frame = true;
+        break;
       }
     }
-    camera_unlock();
+    if (!need_frame) continue;
+
+    size_t len = 0;
+    uint32_t seq = 0;
+    if (!copy_frame(slot, &len, &seq)) continue;
+
+    for (int i = 0; i < MAX_CLIENTS_TOTAL; i++) {
+      StreamClient& c = clients[i];
+      if (c.fd < 0 || !c.streaming || c.slot != slot) continue;
+      if (c.last_seq == seq) continue;
+
+      char hdr[128];
+      int hl = snprintf(hdr, sizeof(hdr),
+                        "--x5frame\r\nContent-Type: image/jpeg\r\n"
+                        "Content-Length: %u\r\n\r\n",
+                        (unsigned)len);
+      bool ok = true;
+      send_all_close_on_fail(c.fd, hdr, (size_t)hl, &ok);
+      send_all_close_on_fail(c.fd, tx_buf, len, &ok);
+      send_all_close_on_fail(c.fd, "\r\n", 2, &ok);
+      if (ok) {
+        c.last_seq = seq;
+      } else {
+        close_client(c);
+      }
+    }
   }
 }
 
