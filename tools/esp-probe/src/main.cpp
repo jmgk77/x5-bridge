@@ -1,5 +1,5 @@
-// Probe de bring-up: identifica chip, flash, PSRAM, heap e WiFi.
-// Nao altera nada; apenas imprime um relatorio a cada 10 s.
+// Bring-up probe: identifies chip, flash, PSRAM, heap, and WiFi.
+// It changes nothing; it only prints a report every 10 s.
 #include <Arduino.h>
 #include <WiFi.h>
 #include <esp_heap_caps.h>
@@ -10,7 +10,7 @@
 #ifdef CAMERA_PROBE
 #include "esp_camera.h"
 
-// Pinagem AI-Thinker ESP32-CAM
+// AI-Thinker ESP32-CAM pinout
 #define PWDN_GPIO_NUM   32
 #define RESET_GPIO_NUM  -1
 #define XCLK_GPIO_NUM    0

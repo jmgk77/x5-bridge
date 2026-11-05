@@ -1,51 +1,52 @@
-# Bring-up ESP32 (C3 e S3) — medições e decisões
+# ESP32 bring-up (C3 and S3) — measurements and decisions
 
-> **Status:** o port foi implementado em [`firmware/`](../firmware/) com os
-> envs `esp32c3`, `esp32s3`, `esp32cam` e `esp32dev`; este documento registra o
-> bring-up e as medições de hardware que embasaram a escolha do alvo. Para
-> build, configuração e limitações do firmware final, veja
-> [`firmware/README.md`](../firmware/README.md). O comparativo das três
-> ESP32-CAM está em [`esp32cam-boards.md`](esp32cam-boards.md).
+> **Status:** the port is implemented in [`firmware/`](../firmware/) with the
+> envs `esp32c3`, `esp32s3`, `esp32cam` and `esp32dev`. This document records
+> the bring-up and the hardware measurements that supported the target
+> selection. For build, configuration, and limitations of the final firmware,
+> see [`firmware/README.md`](../firmware/README.md). The comparison of the three
+> ESP32-CAM boards is in [`esp32cam-boards.md`](esp32cam-boards.md).
 
-Registro do que foi executado para validar a viabilidade do port do bridge X5.
-Serve para não refazer a investigação nem perder as configurações que funcionaram.
+Record of the work done to validate the feasibility of the X5 bridge port. Use
+it to avoid repeating the investigation and to keep the configurations that
+worked.
 
-## Ferramentas usadas
+## Tools used
 
-| Ferramenta | Versão | Uso |
+| Tool | Version | Use |
 |---|---|---|
 | PlatformIO Core | 6.2.0 (`~/.platformio/penv/bin/pio`) | build, upload, monitor |
-| platform espressif32 | 7.1.3 (6.12.0 também instalada) | toolchain/framework |
-| framework-arduinoespressif32 | 4.20017.260907 (reporta IDF 4.4.7) | firmware do probe |
+| platform espressif32 | 7.1.3 (6.12.0 also installed) | toolchain/framework |
+| framework-arduinoespressif32 | 4.20017.260907 (reports IDF 4.4.7) | probe firmware |
 | toolchain-riscv32-esp | 8.4.0+2021r2-patch5 | C3 |
 | toolchain-xtensa-esp32s3 | 8.4.0+2021r2-patch5 | S3 |
-| esptool (sistema) | 4.7.0 (`/usr/bin/esptool`) | `chip_id` |
-| esptool (PlatformIO) | 4.11.0 (`~/.platformio/packages/tool-esptoolpy/esptool.py`) | fallback p/ S3 |
-| pyserial (penv) | — | leitura da serial USB-CDC |
+| esptool (system) | 4.7.0 (`/usr/bin/esptool`) | `chip_id` |
+| esptool (PlatformIO) | 4.11.0 (`~/.platformio/packages/tool-esptoolpy/esptool.py`) | fallback for S3 |
+| pyserial (penv) | — | USB-CDC serial read |
 
-> O esptool 4.7.0 do sistema **não consegue gravar/ler S3** (falta
-> `stub_flasher_32s3.json`). Use o esptool do PlatformIO ou o `pio run`.
-> Para C3 o esptool do sistema funciona.
+> The system esptool 4.7.0 **cannot flash/read the S3** (missing
+> `stub_flasher_32s3.json`). Use the PlatformIO esptool or `pio run`. For the
+> C3, the system esptool works.
 
-## Firmware de probe
+## Probe firmware
 
-Fonte: [`tools/esp-probe/`](../tools/esp-probe/) (`platformio.ini` + `src/main.cpp`).
-Imprime chip, revisão, cores, frequência, flash, PSRAM, heap, scan WiFi e testa
-alocações de 16/20/24/32 KB (3 de cada).
+Source: [`tools/esp-probe/`](../tools/esp-probe/) (`platformio.ini` +
+`src/main.cpp`). It prints chip, revision, cores, frequency, flash, PSRAM, heap,
+and WiFi scan. It also tests allocations of 16/20/24/32 KB (3 of each).
 
-### Comandos
+### Commands
 
 ```bash
 # C3
 ~/.platformio/penv/bin/pio run -d tools/esp-probe -e esp32-c3 -t upload
 
-# S3 (módulo 4MB flash + 2MB PSRAM)
+# S3 (module with 4MB flash + 2MB PSRAM)
 ~/.platformio/penv/bin/pio run -d tools/esp-probe -e esp32-s3 -t upload
 
-# ESP32-CAM (AI-Thinker, CH340 em /dev/ttyUSB0; inclui teste da OV2640)
+# ESP32-CAM (AI-Thinker, CH340 on /dev/ttyUSB0; includes the OV2640 test)
 ~/.platformio/penv/bin/pio run -d tools/esp-probe -e esp32cam -t upload
 
-# leitura da serial (USB-CDC nativo)
+# serial read (native USB-CDC)
 ~/.platformio/penv/bin/python - <<'PY'
 import serial, glob, time
 p = serial.Serial(sorted(glob.glob('/dev/ttyACM*'))[0], 115200, timeout=1)
@@ -56,223 +57,233 @@ while time.time() - t < 20:
 PY
 ```
 
-## Resultado — ESP32-C3
+## Result — ESP32-C3
 
-| Item | Valor |
+| Item | Value |
 |---|---|
 | Chip | ESP32-C3 (QFN32), **rev v0.4** |
 | Cores / clock | 1 / 160 MHz |
-| Flash | 4 MB embutida (XMC), 80 MHz |
-| PSRAM | **nenhuma** |
-| Rádio | WiFi 4 + BLE |
-| USB | nativo Espressif (VID:PID `303a:1001`), JTAG/serial |
+| Flash | 4 MB embedded (XMC), 80 MHz |
+| PSRAM | **none** |
+| Radio | WiFi 4 + BLE |
+| USB | native Espressif (VID:PID `303a:1001`), JTAG/serial |
 | MAC | `1C:DB:D4:E3:8A:D4` |
 | SDK (Arduino) | `v4.4.7-dirty` |
-| Heap total / livre | 297.988 B / **234.052 B** |
-| Heap mínimo / maior bloco | 135.700 B / 212.980 B |
-| Alocações | 3×16 KB, 3×20 KB, 3×24 KB, 3×32 KB — **todas OK** |
+| Heap total / free | 297,988 B / **234,052 B** |
+| Heap minimum / largest block | 135,700 B / 212,980 B |
+| Allocations | 3×16 KB, 3×20 KB, 3×24 KB, 3×32 KB — **all OK** |
 
-Scan WiFi: 8–9 redes; canal 1 mais forte/ocupado (`ELEUSIS` −51, `#CLARO-WIFI` −50).
+WiFi scan: 8–9 networks; channel 1 strongest/busiest (`ELEUSIS` −51,
+`#CLARO-WIFI` −50).
 
-**Conclusão:** 2×24 KB de frame pool + lwIP + HTTP cabem com folga.
-O C3 é **suficiente** para 1 câmera e 1–2 clientes MJPEG.
+**Conclusion:** 2×24 KB of frame pool + lwIP + HTTP fit with margin. The C3 is
+**sufficient** for 1 camera and 1–2 MJPEG clients.
 
-## Resultado — ESP32-S3
+## Result — ESP32-S3
 
-| Item | Valor |
+| Item | Value |
 |---|---|
-| Chip | ESP32-S3 (QFN56), rev v0.2 (esptool) / v0.0 no Arduino |
+| Chip | ESP32-S3 (QFN56), rev v0.2 (esptool) / v0.0 in Arduino |
 | Cores / clock | 2 / 240 MHz |
-| Flash | 4 MB embutida (XMC), 80 MHz |
-| PSRAM | **2 MB embutida (AP_3v3)**, detectada |
-| Rádio | WiFi 4 + BLE |
-| USB | nativo Espressif (`303a:1001`) |
+| Flash | 4 MB embedded (XMC), 80 MHz |
+| PSRAM | **2 MB embedded (AP_3v3)**, detected |
+| Radio | WiFi 4 + BLE |
+| USB | native Espressif (`303a:1001`) |
 | MAC | `E4:B3:23:F8:FB:2C` |
 | SDK (Arduino) | `v4.4.7-dirty` |
-| Heap interno total / livre | 360.932 B / **300.828 B** |
-| Heap mínimo / maior bloco interno | 202.476 B / 286.708 B |
-| PSRAM livre / maior bloco | 2.080.767 B / 2.064.372 B |
-| Alocações (RAM interna) | 3×16 KB, 3×20 KB, 3×24 KB, 3×32 KB — **todas OK** |
+| Internal heap total / free | 360,932 B / **300,828 B** |
+| Internal heap minimum / largest block | 202,476 B / 286,708 B |
+| PSRAM free / largest block | 2,080,767 B / 2,064,372 B |
+| Allocations (internal RAM) | 3×16 KB, 3×20 KB, 3×24 KB, 3×32 KB — **all OK** |
 
-Scan WiFi: 3 redes (`ELEUSIS` −62, `#CLARO-WIFI` −62, `DTU:Inverter` −88).
-A diferença para o C3 provavelmente é antena/posição, não uma medição de throughput.
+WiFi scan: 3 networks (`ELEUSIS` −62, `#CLARO-WIFI` −62, `DTU:Inverter` −88).
+The difference from the C3 is probably antenna/position, not a throughput
+measurement.
 
-**Conclusão:** S3 dá margem real: pool de 3×24 KB em PSRAM, double buffering e
-2–4 clientes, além de separar Task CAM (core 0) e HTTP (core 1).
+**Conclusion:** the S3 gives real margin: a 3×24 KB pool in PSRAM, double
+buffering, and 2–4 clients, and it can also separate the CAM task (core 0) from
+HTTP (core 1).
 
-### Configuração obrigatória do S3 no PlatformIO
+### Required S3 configuration in PlatformIO
 
-O board `esp32-s3-devkitc-1` assume 8 MB de flash. Para o módulo de 4 MB:
+The `esp32-s3-devkitc-1` board assumes 8 MB of flash. For the 4 MB module:
 
 ```ini
 board_upload.flash_size = 4MB
-board_build.partitions = default.csv   ; tabela de 4MB (app 1.2MB)
-board_build.arduino.memory_type = qio_qspi  ; PSRAM quad de 2MB
+board_build.partitions = default.csv   ; 4MB table (app 1.2MB)
+board_build.arduino.memory_type = qio_qspi  ; 2MB quad PSRAM
 build_flags = -DBOARD_HAS_PSRAM
 ```
 
-Sem esses ajustes a PSRAM não inicializa (`psram_found = 0`) ou a partição
-default_8MB fica inválida em flash de 4MB.
+Without these settings, the PSRAM does not start (`psram_found = 0`) or the
+default_8MB partition is invalid on 4MB flash.
 
-## Resultado — ESP32-CAM (AI-Thinker)
+## Result — ESP32-CAM (AI-Thinker)
 
-Board com CH340 em `/dev/ttyUSB0` (sem USB nativo). Firmware de probe com
-`lib_deps = espressif/esp32-camera` (2.0.4) e pinagem AI-Thinker.
+Board with CH340 on `/dev/ttyUSB0` (no native USB). Probe firmware with
+`lib_deps = espressif/esp32-camera` (2.0.4) and AI-Thinker pinout.
 
-| Item | Valor |
+| Item | Value |
 |---|---|
 | Chip | ESP32-D0WD-V3, **rev v0.3** |
 | Cores / clock | 2 / 240 MHz |
-| Flash | 4 MB (XMC), **40 MHz, modo DIO** |
-| PSRAM | **2 MB** (não 4 MB), detectada |
-| Rádio | WiFi 4 + BT/BLE |
-| USB | **CH340 externo** (sem USB nativo/JTAG) |
+| Flash | 4 MB (XMC), **40 MHz, DIO mode** |
+| PSRAM | **2 MB** (not 4 MB), detected |
+| Radio | WiFi 4 + BT/BLE |
+| USB | **external CH340** (no native USB/JTAG) |
 | MAC | `3C:E9:0E:86:3F:84` |
 | SDK (Arduino) | `v4.4.7-dirty` |
-| Heap total / livre (após WiFi) | 319.036 B / **246.384 B** |
-| Maior bloco interno | **110.580 B** (menor que C3/S3) |
-| PSRAM livre / maior bloco | 2.095.103 B / 2.064.372 B |
-| Alocações | 3×16/20/24/32 KB na RAM interna — **OK** |
+| Heap total / free (after WiFi) | 319,036 B / **246,384 B** |
+| Largest internal block | **110,580 B** (smaller than C3/S3) |
+| PSRAM free / largest block | 2,095,103 B / 2,064,372 B |
+| Allocations | 3×16/20/24/32 KB in internal RAM — **OK** |
 
-### Câmera OV2640
+### OV2640 camera
 
-`camera_init = ESP_OK`, sensor **PID 0x26 (OV2640)**, JPEG. Resultado por resolução:
+`camera_init = ESP_OK`, sensor **PID 0x26 (OV2640)**, JPEG. Result for each
+resolution:
 
-| Resolução | Resultado |
+| Resolution | Result |
 |---|---|
-| QVGA 320x240 | **OK** (3/3 frames, ~4,5 KB) |
-| VGA 640x480 | **OK** (2/2 frames válidos após o 1º, ~11 KB) |
-| SVGA 800x600 | 1º frame OK, **2º FAIL** |
+| QVGA 320x240 | **OK** (3/3 frames, ~4.5 KB) |
+| VGA 640x480 | **OK** (2/2 valid frames after the 1st, ~11 KB) |
+| SVGA 800x600 | 1st frame OK, **2nd FAIL** |
 | UXGA 1600x1200 | **FAIL** |
 
-Interpretação: a câmera **não está totalmente quebrada** — funciona em QVGA/VGA.
-A falha em SVGA/UXGA indica limite/dano no sensor, no flat ou na banda
-PSRAM/DMA. Para o bridge X5 a câmera onboard **não é usada**, então o board é
-aproveitável: o ESP32, 4 MB de flash, 2 MB de PSRAM e o WiFi funcionam.
+Interpretation: the camera is **not completely broken**. It works at QVGA/VGA.
+The failure at SVGA/UXGA indicates a limit/damage in the sensor, in the ribbon,
+or in the PSRAM/DMA bandwidth. The bridge X5 **does not use** the onboard
+camera, so the board is usable: the ESP32, 4 MB of flash, 2 MB of PSRAM, and
+WiFi work.
 
-### Observações específicas do ESP32-CAM
+### Observations specific to the ESP32-CAM
 
-- Após o upload, a serial pode sair como lixo (`xxxx...`) porque o board fica
-  preso no bootloader/estado de reset. Para ler corretamente, abra a porta e
-  pulse o reset:
+- After upload, the serial output can be garbage (`xxxx...`) because the board
+  stays in the bootloader/reset state. To read correctly, open the port and
+  pulse the reset:
   ```python
   p.setDTR(False); p.setRTS(True); time.sleep(0.15)
   p.setRTS(False); time.sleep(0.2)
   ```
-- O upload em `/dev/ttyUSB0` funcionou direto (a placa/adaptador tem auto-reset).
-- Sem câmera em uso, a PSRAM de 2 MB fica livre para frame pool/buffers.
-- O maior bloco **interno** é só ~110 KB; mantenha o frame pool na PSRAM.
+- Upload on `/dev/ttyUSB0` worked directly (the board/adapter has auto-reset).
+- With no camera in use, the 2 MB PSRAM is free for the frame pool/buffers.
+- The largest **internal** block is only ~110 KB; keep the frame pool in PSRAM.
 
-## Resultado — ESP32 DevKit antigo (D0WD-V3)
+## Result — old ESP32 DevKit (D0WD-V3)
 
-Placa genérica com CP2102 em `/dev/ttyUSB0` (sem USB nativo), upload em 115200.
+Generic board with CP2102 on `/dev/ttyUSB0` (no native USB), upload at 115200.
 
-| Item | Valor |
+| Item | Value |
 |---|---|
-| Chip | ESP32-D0WD-V3, **rev v3.1** (esptool) / v0.3 no Arduino |
+| Chip | ESP32-D0WD-V3, **rev v3.1** (esptool) / v0.3 in Arduino |
 | Cores / clock | 2 / 240 MHz |
-| Flash | 4 MB (XMC), 40 MHz, modo DIO |
-| PSRAM | **nenhuma** |
-| Rádio | WiFi 4 + BT/BLE |
-| USB | CP2102 externo (sem JTAG nativo) |
+| Flash | 4 MB (XMC), 40 MHz, DIO mode |
+| PSRAM | **none** |
+| Radio | WiFi 4 + BT/BLE |
+| USB | external CP2102 (no native JTAG) |
 | MAC | `20:50:0D:E7:16:68` |
 | SDK (Arduino) | `v4.4.7-dirty` |
-| Heap total / livre (após WiFi) | 333.496 B / **261.280 B** |
-| Maior bloco interno | **110.580 B** |
-| Alocações | 3×16/20/24/32 KB na RAM interna — **OK** |
+| Heap total / free (after WiFi) | 333,496 B / **261,280 B** |
+| Largest internal block | **110,580 B** |
+| Allocations | 3×16/20/24/32 KB in internal RAM — **OK** |
 
-Scan WiFi: 8 redes, sinal bom (`ELEUSIS`/`#CLARO-WIFI` −51 dBm).
+WiFi scan: 8 networks, good signal (`ELEUSIS`/`#CLARO-WIFI` −51 dBm).
 
-Observações:
-- `upload_speed` precisou ser **115200**; em 460800 o esptool não conectou.
-- Ao abrir a serial com pulso DTR/RTS podem aparecer vários boots seguidos;
-  depois estabiliza e imprime os relatórios normalmente.
-- Sem PSRAM: o frame pool (2×24 KB) cabe na RAM interna, mas divide espaço com
-  lwIP/TCP. Serve para o caso básico (1 câmera, 1–2 clientes).
+Observations:
+- `upload_speed` had to be **115200**; at 460800 esptool did not connect.
+- When you open the serial port with a DTR/RTS pulse, several boots can appear
+  in sequence; after that it stabilizes and prints the reports normally.
+- No PSRAM: the frame pool (2×24 KB) fits in internal RAM, but it shares space
+  with lwIP/TCP. It serves the basic case (1 camera, 1–2 clients).
 
-## Comparativo dos módulos testados
+## Comparison of the tested modules
 
-| Módulo | CPU | RAM livre pós-WiFi | Maior bloco interno | PSRAM | USB |
+| Module | CPU | Free RAM after WiFi | Largest internal block | PSRAM | USB |
 |---|---|---|---|---|---|
-| ESP32-C3 | 1×160 MHz | 234 KB | 213 KB | — | nativo/JTAG |
-| **ESP32-S3** | **2×240 MHz** | **301 KB** | **287 KB** | **2 MB** | **nativo/JTAG** |
+| ESP32-C3 | 1×160 MHz | 234 KB | 213 KB | — | native/JTAG |
+| **ESP32-S3** | **2×240 MHz** | **301 KB** | **287 KB** | **2 MB** | **native/JTAG** |
 | ESP32-CAM | 2×240 MHz | 246 KB | 110 KB | 2 MB | CH340 |
 | ESP32 DevKit | 2×240 MHz | 261 KB | 110 KB | — | CH340 |
 
-## Recomendação
+## Recommendation
 
-**Mais apropriado: ESP32-S3.** É o único com folga simultânea de CPU (dual-core),
-RAM interna (301 KB livres / 287 KB de bloco) e PSRAM (2 MB), além de USB
-nativo/JTAG. Permite o desenho ideal do plano: Task CAM no core 0, HTTP no
-core 1, frame pool de 3×24 KB em PSRAM e 2–4 clientes sem risco de o envio HTTP
-travar a recepção UDP.
+**Most appropriate: ESP32-S3.** It is the only one with simultaneous margin of
+CPU (dual-core), internal RAM (301 KB free / 287 KB block), and PSRAM (2 MB),
+and it also has native USB/JTAG. It permits the ideal design of the plan: CAM
+task on core 0, HTTP on core 1, frame pool of 3×24 KB in PSRAM, and 2–4 clients
+with no risk that the HTTP send blocks the UDP receive.
 
-Alternativas, em ordem:
+Alternatives, in order:
 
-1. **ESP32-CAM (reaproveitado, sem a câmera)** — melhor custo/benefício se a
-   ideia é usar o que já existe: dual-core + 2 MB de PSRAM + 246 KB de heap.
-   Perde para o S3 em RAM interna (110 KB de bloco) e não tem USB nativo.
-2. **ESP32-C3** — suficiente para o caso básico (1 câmera, 1–2 clientes), menor
-   consumo e mais simples, mas single-core e sem PSRAM; menos margem para
-   multicliente/áudio/PTZ.
-3. **ESP32 DevKit antigo** — funciona, mas sem PSRAM e com bloco interno de
-   110 KB; fica como bancada de teste, não como alvo final.
-4. **ESP32-C6** — não testado; exigiria ESP-IDF e, por ser single-core sem
-   PSRAM, não supera o S3 para este workload.
+1. **ESP32-CAM (reused, without the camera)** — best cost/benefit if the idea is
+   to use what already exists: dual-core + 2 MB of PSRAM + 246 KB of heap. It is
+   below the S3 in internal RAM (110 KB block) and has no native USB.
+2. **ESP32-C3** — sufficient for the basic case (1 camera, 1–2 clients), lower
+   power, and simpler, but single-core and no PSRAM; less margin for
+   multi-client/audio/PTZ.
+3. **Old ESP32 DevKit** — it works, but without PSRAM and with a 110 KB internal
+   block; use it as a test bench, not as the final target.
+4. **ESP32-C6** — not tested; it needs ESP-IDF and, because it is single-core
+   without PSRAM, it does not exceed the S3 for this workload.
 
-## Toolchain: o que funciona para cada chip
+## Toolchain: what works for each chip
 
-| Alvo | Arduino (PlatformIO 7.1.3) | ESP-IDF (PlatformIO) |
+| Target | Arduino (PlatformIO 7.1.3) | ESP-IDF (PlatformIO) |
 |---|---|---|
-| ESP32-C3 | **sim** (testado) | sim |
-| ESP32-S3 | **sim** (testado) | sim |
-| ESP32 (D0WD-V3) | **sim** (testado no ESP32-CAM) | sim |
-| ESP32-C6 | **não** (board só declara `espidf`) | sim |
+| ESP32-C3 | **yes** (tested) | yes |
+| ESP32-S3 | **yes** (tested) | yes |
+| ESP32 (D0WD-V3) | **yes** (tested on the ESP32-CAM) | yes |
+| ESP32-C6 | **no** (the board declares only `espidf`) | yes |
 
-Consequência para o plano: se o alvo for **C6**, o projeto tem que nascer em
-**ESP-IDF** (não Arduino com esta instalação do PlatformIO). Para **C3/S3**,
-Arduino funciona, mas o core instalado usa **IDF 4.4.7**.
+Consequence for the plan: if the target is the **C6**, the project must start in
+**ESP-IDF** (not Arduino with this PlatformIO installation). For the **C3/S3**,
+Arduino works, but the installed core uses **IDF 4.4.7**.
 
-## Atualizações no plano de port
+## Updates to the port plan
 
-1. **C3 vira alvo principal de desenvolvimento** (hardware já disponível e medido).
-2. C3: frame pool de **2 slots × 24 KB**, `max_open_sockets = 2`, envio HTTP
-   não-bloqueante, Task CAM prioritária (single-core).
-3. S3: frame pool de **3 slots × 24 KB em PSRAM**, Task CAM no core 0 e HTTP no
-   core 1, até 4 clientes. Hot buffers (RX UDP, lwIP) continuam em RAM interna.
-4. Não portar `std::thread`/`std::vector`/`send()` bloqueante do `serve.cpp`.
-5. `WiFi.setSleep(false)` (`WIFI_PS_NONE`) em ambos.
-6. USB-CDC nativo dispensa UART externa; C3/S3 têm JTAG embutido.
-   ESP32-CAM usa CH340 e exige reset DTR/RTS correto para console.
-7. Se for C6: prever instalação do ESP-IDF e reescrever o plano de componentes
-   para IDF (sem depender do core Arduino).
-8. **ESP32-CAM é reutilizável como bridge** (câmera onboard fora de escopo):
-   dual-core, 4 MB flash, 2 MB PSRAM. Frame pool deve ir para a PSRAM, pois o
-   maior bloco interno é só ~110 KB. Não tem USB nativo/JTAG.
-9. A câmera OV2640 do ESP32-CAM funciona em QVGA/VGA e falha em SVGA/UXGA;
-   se um dia for usada, limitar a VGA e investigar flat/alimentação.
+1. **The C3 becomes the main development target** (hardware already available
+   and measured).
+2. C3: frame pool of **2 slots × 24 KB**, `max_open_sockets = 2`, non-blocking
+   HTTP send, priority CAM task (single-core).
+3. S3: frame pool of **3 slots × 24 KB in PSRAM**, CAM task on core 0 and HTTP
+   on core 1, up to 4 clients. Hot buffers (UDP RX, lwIP) stay in internal RAM.
+4. Do not port `std::thread`/`std::vector`/blocking `send()` from `serve.cpp`.
+5. `WiFi.setSleep(false)` (`WIFI_PS_NONE`) on both.
+6. Native USB-CDC removes the need for an external UART; the C3/S3 have
+   embedded JTAG. The ESP32-CAM uses a CH340 and needs the correct DTR/RTS reset
+   for the console.
+7. If the target is the C6: plan the ESP-IDF installation and rewrite the
+   component plan for IDF (do not depend on the Arduino core).
+8. **The ESP32-CAM is reusable as a bridge** (onboard camera out of scope):
+   dual-core, 4 MB flash, 2 MB PSRAM. The frame pool must go to PSRAM, because
+   the largest internal block is only ~110 KB. It has no native USB/JTAG.
+9. The OV2640 camera of the ESP32-CAM works at QVGA/VGA and fails at SVGA/UXGA.
+   If you use it one day, limit it to VGA and investigate the ribbon/power
+   supply.
 
-## Observações
+## Observations
 
-- O flash do C3 estava essencialmente **vazio** antes do probe (100% `0xFF`,
-  exceto 24 bytes em `0x50000`), então não havia firmware a preservar.
-- O probe fica gravado no board; para regravar outro firmware, basta `pio run -t upload`.
-- O relatório do Arduino mostra `chip_revision v0.0` no S3, divergindo do
-  `esptool` (`v0.2`): usar o valor do esptool como referência.
-- Medições de heap foram feitas **sem associar ao AP**; após conexão WiFi real,
-  esperar uma queda adicional (fila/associação) e revalidar com a câmera.
+- The C3 flash was essentially **empty** before the probe (100% `0xFF`, except
+  for 24 bytes at `0x50000`), so there was no firmware to preserve.
+- The probe stays in the board; to flash another firmware, run
+  `pio run -t upload`.
+- The Arduino report shows `chip_revision v0.0` on the S3, which differs from
+  `esptool` (`v0.2`). Use the esptool value as the reference.
+- The heap measurements were done **without association to the AP**. After a
+  real WiFi connection, expect an additional drop (queue/association) and
+  revalidate with the camera.
 
-## Status final
+## Final status
 
-O firmware final está em [`firmware/`](../firmware/) e tem quatro envs:
-**ESP32-C3** (`esp32c3`), **ESP32-S3** (`esp32s3`), **ESP32-CAM**
-(`esp32cam`) e **ESP32 DevKit** (`esp32dev`). Foi validado com uma câmera X5 em
-todos: discovery, MJPEG, snapshot, MQTT, OTA, `/config` e `/reboot`. No S3, a
-PSRAM de 2 MB e o dual-core ficaram ativos, mas o RSSI no teste ficou
-~-64/-65 dBm contra ~-50 dBm do C3; o FPS foi limitado pelo WiFi. As três
-ESP32-CAM foram comparadas em [`esp32cam-boards.md`](esp32cam-boards.md); a
-board com a câmera quebrada foi usada como bridge (a câmera onboard não é
-usada). No teste com duas câmeras, o ESP32-CAM funcionou mas com FPS baixo; no
-S3 a CAM1 (`.71`) funcionou e a CAM0 (`.10`) ficou ONLINE com ticket e 0 frames.
-Medições, limites e pendências estão em
-[`firmware/README.md`](../firmware/README.md).
+The final firmware is in [`firmware/`](../firmware/) and has four envs:
+**ESP32-C3** (`esp32c3`), **ESP32-S3** (`esp32s3`), **ESP32-CAM** (`esp32cam`),
+and **ESP32 DevKit** (`esp32dev`). It was validated with one X5 camera on all of
+them: discovery, MJPEG, snapshot, MQTT, OTA, `/config`, and `/reboot`. On the
+S3, the 2 MB PSRAM and the dual-core were active, but the RSSI in the test was
+~-64/-65 dBm against ~-50 dBm for the C3; the FPS was limited by WiFi. The three
+ESP32-CAM boards were compared in
+[`esp32cam-boards.md`](esp32cam-boards.md); the board with the broken camera was
+used as the bridge (the onboard camera is not used). In the two-camera test, the
+ESP32-CAM worked but with low FPS; on the S3, CAM1 (`.71`) worked and CAM0
+(`.10`) stayed ONLINE with a ticket and 0 frames. Measurements, limits, and open
+items are in [`firmware/README.md`](../firmware/README.md).

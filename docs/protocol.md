@@ -1,51 +1,50 @@
-# Protocolo da câmera X5 (YunSync / 2BK-2) — engenharia reversa
+# X5 camera protocol (YunSync / 2BK-2) — reverse engineering
 
-Documentação do protocolo P2P usado por câmeras X5 (marca YsxLite), baseada em:
+Documentation of the P2P protocol used by X5 cameras (YsxLite brand), based on:
 
-- Engenharia reversa do app Android (`DavidVentura/cam-reverse`)
-- Capturas PCAPdroid do app oficial (sessão funcionando)
-- Capturas tcpdump da reimplementação em TypeScript
-- Reimplementação em C++ (`../linux/serve.cpp`, este repo)
+- Reverse engineering of the Android app (`DavidVentura/cam-reverse`)
+- PCAPdroid captures of the official app (working session)
+- tcpdump captures of the TypeScript reimplementation
+- C++ reimplementation (`../linux/serve.cpp`, this repository)
 
-Tudo aqui foi **observado empiricamente**. Campos marcados com `?` são
-desconhecidos mas funcionam como constante; campos sem `?` foram decodificados
-com certeza.
+All information here was **observed empirically**. Fields marked with `?` are
+unknown but work as constants; fields without `?` were decoded with certainty.
 
-## Arquitetura
-
-~~~
-Câmera X5 (192.168.0.10:32108 UDP) <---> Cliente (Linux, ESP32, ...)
-~~~
-
-Todo o tráfego é **UDP**. A câmera escuta na porta 32108. O cliente usa uma
-porta efêmera qualquer. Não há TCP, TLS, RTP, RTSP. A "criptografia" é uma
-transformação trivial de bytes (ver seção XqBytesEnc).
-
-Um "frame" de vídeo no ar (~16 KB de JPEG) é fragmentado em ~25 pacotes UDP
-de 1032 bytes cada. ~16 fps → ~400 pacotes/s de mídia.
-
-## Fluxo completo
+## Architecture
 
 ~~~
-Cliente                                Câmera
+X5 camera (192.168.0.10:32108 UDP) <---> Client (Linux, ESP32, ...)
+~~~
+
+All traffic is **UDP**. The camera listens on port 32108. The client uses any
+ephemeral port. There is no TCP, TLS, RTP, or RTSP. The "encryption" is a
+trivial byte transformation (see the XqBytesEnc section).
+
+One video "frame" on the wire (~16 KB of JPEG) is fragmented into ~25 UDP
+packets of 1032 bytes each. ~16 fps → ~400 media packets/s.
+
+## Complete flow
+
+~~~
+Client                                Camera
   |--- LanSearch (4B) ---------------->|
   |<-- PunchPkt (24B) -----------------|
   |--- P2pRdy (24B, echo) -------------|
   |<-- P2pRdy (24B) -------------------|
   |--- Drw login (180B) ---------------|
   |<-- DrwAck id=0 --------------------|
-  |<-- Drw ConnectUserAck (28B) -------|  ticket extraído aqui (offset 24-27 pós-decrypt)
+  |<-- Drw ConnectUserAck (28B) -------|  ticket extracted here (offset 24-27 after decrypt)
   |--- Drw VideoParamSet (28B) ------->|
-  |--- Drw StartVideo (20B) ---------->|  (enviados em sequência, sem esperar ACK)
-  |<-- DrwAck id=1 --------------------|  (ack do VPS)
-  |<-- DrwAck id=2 --------------------|  (ack do SV)
+  |--- Drw StartVideo (20B) ---------->|  (sent in sequence, without waiting for ACK)
+  |<-- DrwAck id=1 --------------------|  (VPS ack)
+  |<-- DrwAck id=2 --------------------|  (SV ack)
   |<-- Drw cmd=0x1831 (VPS ack) -------|  (stream=0)
   |--- DrwAck id=1 ------------------->|
   |<-- Drw cmd=0x1031 (SV ack) --------|  (stream=0)
   |--- DrwAck id=2 ------------------->|
   |                                    |
-  |<== Drw stream=1 (mídia) ===========|  JPEGs continuamente
-  |--- DrwAck ------------------------>|  para cada pacote recebido
+  |<== Drw stream=1 (media) ===========|  JPEGs continuously
+  |--- DrwAck ------------------------>|  for each packet received
   |                                    |
   |--- P2PAlive ---------------------->|  (keepalive ~1 Hz)
   |<-- P2PAlive -----------------------|
@@ -54,75 +53,77 @@ Cliente                                Câmera
 
 ## 1. Discovery
 
-### LanSearch (cliente → câmera)
+### LanSearch (client → camera)
 
-4 bytes, sem header:
+4 bytes, no header:
 
 ~~~
 f1 30 00 00
 ~~~
 
-### PunchPkt (câmera → cliente)
+### PunchPkt (camera → client)
 
-24 bytes. Identifica a câmera e seu número de série:
+24 bytes. Identifies the camera and its serial number:
 
 ~~~
 f1 41 00 14 42 41 54 45 00 00 00 00 00 08 86 04 48 44 4c 5a 42 00 00 00
       ^^^^^ ^^^^^ ^^^^^^^^^^^^^^^^^^^^ ^^^^^^^^^^^^^^^^^^^
-      len=20 "BATE" (serial)          "HDLZB" (modelo/sufixo)
+      len=20 "BATE" (serial)          "HDLZB" (model/suffix)
 ~~~
 
-- O serial completo é `BATE558596HDLZB` (16 bytes após `f1 41 00 14`)
-- Bytes `00 00 00 08 86 04` no meio são desconhecidos mas constantes por câmera
-- O nome do dispositivo é "BATE" + sufixo
+- The complete serial number is `BATE558596HDLZB` (16 bytes after `f1 41 00 14`)
+- Bytes `00 00 00 08 86 04` in the middle are unknown but constant for each
+  camera
+- The device name is "BATE" + suffix
 
 ## 2. Handshake
 
-### P2pRdy (cliente → câmera)
+### P2pRdy (client → camera)
 
-Echo do PunchPkt com **um byte alterado** (byte[1] de `0x41` → `0x42`):
+Echo of the PunchPkt with **one byte changed** (byte[1] from `0x41` → `0x42`):
 
 ~~~
-f1 42 00 14 42 41 54 45 ... (mesmos 24 bytes, só o 0x41 vira 0x42)
+f1 42 00 14 42 41 54 45 ... (same 24 bytes, only 0x41 becomes 0x42)
 ~~~
 
-A câmera responde com um `P2pRdy` próprio (mesmo formato, também `f1 42...`).
-Após isso, a câmera está pronta para receber o login.
+The camera responds with its own `P2pRdy` (same format, also `f1 42...`). After
+this, the camera is ready to receive the login.
 
 ### Keepalive
 
-- **P2PAlive**: `f1 e0 00 00` — câmera manda a cada ~1s. Cliente responde.
-- **P2PAliveAck**: `f1 e1 00 00` — resposta ao P2PAlive.
+- **P2PAlive**: `f1 e0 00 00` — the camera sends it every ~1s. The client
+  responds.
+- **P2PAliveAck**: `f1 e1 00 00` — response to P2PAlive.
 
-Se o cliente não responde em ~3s, a câmera encerra a sessão.
+If the client does not respond in ~3s, the camera ends the session.
 
-## 3. Header Drw (comum a todos os comandos de controle)
+## 3. Drw header (common to all control commands)
 
-Todo Drw tem a mesma estrutura de 20 bytes de header:
+Every Drw has the same 20-byte header structure:
 
 ~~~
-offset  size  nome            notas
+offset  size  name            notes
 ------  ----  --------------  -------------------------------------------
-0       2     hdr             sempre f1 d0
-2       2     length          BE; tamanho total do pacote - 4
-4       1     param           sempre d1 (unlocked)
-5       1     stream          0 = controle, 1 = mídia
-6       2     id              BE; ID do comando (incremental por sessão)
-8       2     start_cmd       sempre 11 0a
-10      2     command         BE; código do comando (ver tabela)
-12      2     payload_len     u16_swap(4 + data_len); ver nota
-14      2     cc_dest         BE; destino (ver tabela de comandos)
-16      4     ticket          4 bytes; zeros até receber ConnectUserAck
-20      ...   data            payload específico do comando
+0       2     hdr             always f1 d0
+2       2     length          BE; total packet size - 4
+4       1     param           always d1 (unlocked)
+5       1     stream          0 = control, 1 = media
+6       2     id              BE; command ID (incremental for each session)
+8       2     start_cmd       always 11 0a
+10      2     command         BE; command code (see table)
+12      2     payload_len     u16_swap(4 + data_len); see note
+14      2     cc_dest         BE; destination (see command table)
+16      4     ticket          4 bytes; zeros until ConnectUserAck
+20      ...   data            command-specific payload
 ~~~
 
-**Nota sobre payload_len**: o valor é `u16_swap(4 + data_len)` onde `4` são os
-bytes do ticket. Ex: para VPS com 8 bytes de data, payload_len = 12, gravado
-como `0c 00`.
+**Note about payload_len**: the value is `u16_swap(4 + data_len)`, where `4` is
+the size of the ticket. Example: for VPS with 8 bytes of data, payload_len = 12,
+stored as `0c 00`.
 
-**Tabela de comandos** (campo `command`):
+**Command table** (`command` field):
 
-| Comando          | Valor   | cc_dest |
+| Command          | Value   | cc_dest |
 |------------------|---------|---------|
 | ConnectUser      | `20 10` | `ff 00` |
 | ConnectUserAck   | `20 11` | `ff 00` |
@@ -130,22 +131,22 @@ como `0c 00`.
 | VideoParamSetAck | `18 31` | `00 00` |
 | StartVideo       | `10 30` | `00 00` |
 | StartVideoAck    | `10 31` | `00 00` |
-| (outros acks)    | `18 32`, `10 32` | `00 00` |
+| (other acks)     | `18 32`, `10 32` | `00 00` |
 
-Os comandos `*Ack` (`0x2011`, `0x1831`, `0x1031`) vêm **da câmera para o
-cliente**, não o contrário.
+The `*Ack` commands (`0x2011`, `0x1831`, `0x1031`) come **from the camera to the
+client**, not the other way.
 
 ## 4. Login (ConnectUser)
 
-### Drw de login (cliente → câmera)
+### Login Drw (client → camera)
 
-**Pacote de 180 bytes totais**, verificado empiricamente. Estrutura:
+**Packet of 180 bytes total**, verified empirically. Structure:
 
-- Header Drw (20B): `f1 d0 00 b0 d1 00 <id:2> 11 0a 20 10 a4 00 ff 00`
-- Ticket (4B): `00 00 00 00` (zeros — o login não usa ticket)
-- Payload (160B): fixo, **copiado verbatim do app YsxLite**
+- Drw header (20B): `f1 d0 00 b0 d1 00 <id:2> 11 0a 20 10 a4 00 ff 00`
+- Ticket (4B): `00 00 00 00` (zeros — the login does not use a ticket)
+- Payload (160B): fixed, **copied verbatim from the YsxLite app**
 
-Hex completo (que funciona como login):
+Complete hex (this works as a login):
 
 ~~~
 f1d000b0d1000000110a2010a400ff00000000006f0101010101010101010101010101
@@ -158,39 +159,40 @@ f1d000b0d1000000110a2010a400ff00000000006f0101010101010101010101010101
 01010101010160656c68
 ~~~
 
-**Importante**: o comando `SendUsrChk` do `cam-reverse` (que produz um Drw de
-56 bytes com "admin"+"admin" encriptado) **NÃO funciona** com a X5. A câmera
-aceita (manda Ack), mas não entra em modo de streaming contínuo. O app oficial
-manda 180 bytes com muito mais informação (device ID, versão, nonce,
-capacidades) — o payload acima é o capturado do app e funciona. Se o payload
-for idêntico entre sessões, ele pode ser hardcoded (foi o que fizemos).
+**Important**: the `SendUsrChk` command from `cam-reverse` (which produces a
+56-byte Drw with encrypted "admin"+"admin") **does NOT work** with the X5. The
+camera accepts it (sends Ack), but does not enter continuous streaming mode. The
+official app sends 180 bytes with much more information (device ID, version,
+nonce, capabilities). The payload above is the capture from the app and it
+works. If the payload is identical between sessions, it can be hardcoded (this
+is what we did).
 
-### DrwAck (câmera → cliente) — ack do login
+### DrwAck (camera → client) — login ack
 
 32 bytes:
 
 ~~~
 f1 d1 00 06 d2 00 00 01 00 00 00 00 ...
 ^^^^ ^^^^^ ^^ ^^ ^^^^^ ^^^^^ ^^^^^
-DrwAck len stream item=1 pkt_id=0 (id do Drw sendo ackado, BE)
+DrwAck len stream item=1 pkt_id=0 (id of the Drw being acked, BE)
 ~~~
 
-**Atenção ao offset do pkt_id**: no Drw normal, o id está em [6..7]. No
-DrwAck, o id está em **[8..9]** (porque [6..7] é `item_count = 1`). É fácil
-inverter.
+**Important: the pkt_id offset**: in a normal Drw, the id is at [6..7]. In a
+DrwAck, the id is at **[8..9]** (because [6..7] is `item_count = 1`). It is easy
+to use the wrong offset.
 
-### ConnectUserAck (câmera → cliente) — 28 bytes, contém o ticket
+### ConnectUserAck (camera → client) — 28 bytes, contains the ticket
 
-Header Drw (20B) + 8 bytes de payload **encriptado**. Após decrypt:
+Drw header (20B) + 8 bytes of **encrypted** payload. After decrypt:
 
 ~~~
-offset  size  conteúdo
+offset  size  content
 ------  ----  -------------------------------------
-20      4     status / não usado
-24      4     TICKET  <-- o que precisamos
+20      4     status / not used
+24      4     TICKET  <-- what we need
 ~~~
 
-O código de extração (após XqBytesDec no payload de 8 bytes):
+The extraction code (after XqBytesDec on the 8-byte payload):
 
 ~~~c
 int payload_len = (buf[12] | (buf[13] << 8));  // LE (!)
@@ -199,47 +201,48 @@ if (dec_len > 0) xq_dec(buf + 20, dec_len, 4);
 memcpy(ticket, buf + 24, 4);
 ~~~
 
-**O ticket muda a cada sessão** (é gerado pela câmera), então tem que ser
-extraído a cada login. Uma vez extraído, ele é usado em **todos** os Drws
-subsequentes (VPS, SV).
+**The ticket changes for each session** (the camera generates it), so it must be
+extracted for each login. After extraction, it is used in **all** subsequent
+Drws (VPS, SV).
 
-## 5. XqBytesEnc / XqBytesDec — a "criptografia"
+## 5. XqBytesEnc / XqBytesDec — the "encryption"
 
-Não é criptografia de verdade. São duas operações:
+This is not real encryption. It has two operations:
 
-1. **Inverter o bit 0** de cada byte: ímpar → subtrai 1, par → soma 1
-2. **Rotacionar** o buffer por N bytes (N=4 é o único valor usado)
+1. **Invert bit 0** of each byte: odd → subtract 1, even → add 1
+2. **Rotate** the buffer by N bytes (N=4 is the only value used)
 
 ~~~c
-// Encripta in-place (usado em payloads que ENVIAMOS)
+// Encrypts in-place (used in payloads that we SEND)
 void xq_enc(uint8_t* buf, int len, int rot) {
     uint8_t* nb = malloc(len);
     for (int i = 0; i < len; i++) nb[i] = (buf[i] & 1) ? (buf[i]-1) : (buf[i]+1);
-    for (int i = 0; i < len-rot; i++) buf[i] = nb[i+rot];      // rotação "para a esquerda"
+    for (int i = 0; i < len-rot; i++) buf[i] = nb[i+rot];      // "left" rotation
     for (int i = 0; i < rot; i++) buf[len-rot+i] = nb[i];
     free(nb);
 }
 
-// Decripta in-place (usado em payloads que RECEBEMOS)
+// Decrypts in-place (used in payloads that we RECEIVE)
 void xq_dec(uint8_t* buf, int len, int rot) {
     uint8_t* nb = malloc(len);
     for (int i = 0; i < len; i++) nb[i] = (buf[i] & 1) ? (buf[i]-1) : (buf[i]+1);
-    for (int i = rot; i < len; i++) buf[i] = nb[i-rot];        // rotação "para a direita"
+    for (int i = rot; i < len; i++) buf[i] = nb[i-rot];        // "right" rotation
     for (int i = 0; i < rot; i++) buf[i] = nb[len-rot+i];
     free(nb);
 }
 ~~~
 
-Atenção: a inversão de bit é a **mesma** nas duas operações. A única diferença
-é o sentido da rotação. Cuidado ao copiar de outra fonte — algumas
-implementações rotacionam ao contrário e viram lixo.
+Note: the bit inversion is the **same** in both operations. The only difference
+is the rotation direction. Be careful when you copy from another source; some
+implementations rotate in the opposite direction and produce garbage.
 
 ## 6. VideoParamSet + StartVideo
 
-Ambos usam o **ticket** extraído do ConnectUserAck. Devem ser enviados **em
-sequência imediata** (sem esperar Ack entre eles) — é o que o app oficial faz.
+Both use the **ticket** extracted from the ConnectUserAck. Send them **in
+immediate sequence** (without waiting for an Ack between them). The official app
+does this.
 
-### VideoParamSet (cliente → câmera) — 28 bytes
+### VideoParamSet (client → camera) — 28 bytes
 
 ~~~
 f1 d0 00 18 d1 00 <id:2> 11 0a 18 30 0c 00 00 00 <ticket:4> <payload:8>
@@ -247,16 +250,17 @@ f1 d0 00 18 d1 00 <id:2> 11 0a 18 30 0c 00 00 00 <ticket:4> <payload:8>
 hdr  len=24                           plen  cc=0    ticket      payload
 ~~~
 
-**id** = 1 (o primeiro id após o ConnectUserAck)
-**payload** (8 bytes, antes do encrypt): `01 00 00 00 02 00 00 00`
+**id** = 1 (the first id after the ConnectUserAck)
+**payload** (8 bytes, before encryption): `01 00 00 00 02 00 00 00`
 
-Significado: `[resolution_id=1 (640x480), ...?, value=2]`. Para 320x240, use
-`01 00 00 00 01 00 00 00` (ver tabela em `impl.ts` do cam-reverse).
+Meaning: `[resolution_id=1 (640x480), ...?, value=2]`. For 320x240, use
+`01 00 00 00 01 00 00 00` (see the table in `impl.ts` of cam-reverse).
 
-O payload **deve ser encriptado** com `xq_enc(payload, 8, 4)` antes de ir no
-pacote. No ar, o payload (após ticket) é: `03 01 01 01 00 01 01 01`.
+The payload **must be encrypted** with `xq_enc(payload, 8, 4)` before you put it
+in the packet. On the wire, the payload (after the ticket) is:
+`03 01 01 01 00 01 01 01`.
 
-### StartVideo (cliente → câmera) — 20 bytes
+### StartVideo (client → camera) — 20 bytes
 
 ~~~
 f1 d0 00 10 d1 00 <id:2> 11 0a 10 30 04 00 00 00 <ticket:4>
@@ -264,154 +268,156 @@ f1 d0 00 10 d1 00 <id:2> 11 0a 10 30 04 00 00 00 <ticket:4>
 hdr  len=16                           plen=4 cc=0    ticket
 ~~~
 
-**id** = 2. **Sem payload** (payload_len=4 é só o ticket).
+**id** = 2. **No payload** (payload_len=4 is only the ticket).
 
-### Acks da câmera
+### Camera acks
 
-Em resposta, a câmera manda dois pacotes stream=0:
+In response, the camera sends two packets with stream=0:
 
 ~~~
-DrwAck id=1          (ack do VideoParamSet)
-DrwAck id=2          (ack do StartVideo)
+DrwAck id=1          (VideoParamSet ack)
+DrwAck id=2          (StartVideo ack)
 Drw cmd=0x1831       (VideoParamSet ack; stream=0)
 Drw cmd=0x1031       (StartVideo ack; stream=0)
 ~~~
 
-O cliente **deve ACKar todos**, inclusive os dois `cmd=0x18xx/0x10xx` (não são
-DrwAcks, são Drws normais). Após esse ciclo, a câmera começa a mandar
-`stream=1`.
+The client **must ACK all of them**, including the two `cmd=0x18xx/0x10xx`
+packets (they are not DrwAcks, they are normal Drws). After this cycle, the
+camera starts to send `stream=1`.
 
-## 7. Mídia (stream=1)
+## 7. Media (stream=1)
 
-### Formato dos pacotes
+### Packet format
 
 ~~~
-offset  size  conteúdo
+offset  size  content
 ------  ----  --------------------------------------------------
 0       2     f1 d0
 2       2     length
 4       1     d1
 5       1     01  (stream=1)
 6       2     id (BE, incremental)
-8       4     magic: 55 aa 15 a8 (se "framed") OU dado cru
+8       4     magic: 55 aa 15 a8 (if "framed") OR raw data
 ~~~
 
-Existem **dois tipos** de pacote de mídia:
+There are **two types** of media packet:
 
-#### Pacote "framed" (início de bloco)
+#### "framed" packet (start of block)
 
 ~~~
-offset  size  conteúdo
+offset  size  content
 ------  ----  --------------------------------------------------
 8       4     55 aa 15 a8  (magic)
-12      1     tipo: 03 = vídeo, 06 = áudio
-13      ...   metadata (não decodificado)
+12      1     type: 03 = video, 06 = audio
+13      ...   metadata (not decoded)
 ~~~
 
-Aparecem tipicamente com tamanho 36-40 bytes. O tipo=03 precede cada JPEG novo,
-o tipo=06 precede cada chunk de áudio.
+They typically appear with size 36-40 bytes. Type=03 comes before each new JPEG;
+type=06 comes before each audio chunk.
 
-**Não** contribuem bytes para o JPEG — o JPEG começa no próximo pacote.
+They **do not** add bytes to the JPEG. The JPEG starts in the next packet.
 
-#### Pacote "raw" (dados de mídia)
+#### "raw" packet (media data)
 
 ~~~
-offset  size  conteúdo
+offset  size  content
 ------  ----  --------------------------------------------------
-8       ...   dados crus (para vídeo: bytes do JPEG, começando com ff d8 no 1º pacote)
+8       ...   raw data (for video: JPEG bytes, starting with ff d8 in the 1st packet)
 ~~~
 
-Tamanho típico: 1000-1032 bytes. Devem ser concatenados para montar o JPEG.
+Typical size: 1000-1032 bytes. Concatenate them to assemble the JPEG.
 
-### Montagem de um frame
+### Frame assembly
 
 ~~~
-para cada pacote stream=1:
-    se tem magic e tipo=03:
-        # novo frame começou
-        se buffer_atual tem ffd8 (SOI) e ff d9 (EOI) no final:
-            emite buffer_atual como JPEG
-        buffer_atual = vazio
-        # não adiciona nada do pacote framed
-    senão se tem magic e tipo=06:
-        # áudio, ignora
+for each packet with stream=1:
+    if it has magic and type=03:
+        # a new frame started
+        if current_buffer has ffd8 (SOI) and ff d9 (EOI) at the end:
+            emit current_buffer as JPEG
+        current_buffer = empty
+        # add nothing from the framed packet
+    else if it has magic and type=06:
+        # audio, ignore
         continue
-    senão (raw):
-        buffer_atual += bytes[8:]
+    else (raw):
+        current_buffer += bytes[8:]
 ~~~
 
-O JPEG termina com `ff d9` (marcador EOI). Devido a padding, é comum que o
-último pacote tenha bytes extras após o `ff d9` — o código que funciona
-**trunca no último `ff d9`** antes de emitir:
+The JPEG ends with `ff d9` (EOI marker). Because of padding, the last packet
+often has extra bytes after the `ff d9`. The working code **truncates at the
+last `ff d9`** before it emits the frame:
 
 ~~~c
 int end = -1;
 for (int i = 0; i < len-1; i++) if (buf[i]==0xff && buf[i+1]==0xd9) end = i;
-if (end > 0) emit(buf, end + 2);   // inclusivo
+if (end > 0) emit(buf, end + 2);   // inclusive
 ~~~
 
-### Métricas observadas
+### Observed metrics
 
 - **FPS**: ~16 fps (640x480)
-- **Tamanho do JPEG**: 14-18 KB por frame (média ~16 KB)
-- **Pacotes por frame**: ~25 (24 data + 1 framed)
-- **Taxa UDP**: ~400 pacotes/s
-- **Throughput**: ~260 KB/s de vídeo
+- **JPEG size**: 14-18 KB for each frame (average ~16 KB)
+- **Packets for each frame**: ~25 (24 data + 1 framed)
+- **UDP rate**: ~400 packets/s
+- **Throughput**: ~260 KB/s of video
 
-## 8. Notas para port ESP32
+## 8. Notes for the ESP32 port
 
-- **Sockets**: usar `lwip_*` (API POSIX-like do ESP-IDF). `recvfrom`/`sendto`
-  funcionam direto.
-- **Keepalive**: `P2PAlive` a cada 1s deve ser respondido em <3s. Usar
-  `esp_timer` ou uma task dedicada.
-- **HTTP MJPEG**: `esp_http_server` não tem suporte nativo a
-  `multipart/x-mixed-replace` streaming. Duas opções: (a) usar
-  `httpd_req_send_chunk()` manualmente (funciona, mas com workarounds); (b)
-  usar sockets raw TCP + parser HTTP mínimo (é o que fizemos no `../linux/serve.cpp`,
-  ~80 linhas).
-- **Memória**: cada JPEG tem ~16 KB. Para buffer duplo (enquanto envia o
-  anterior, monta o próximo), reserve ~40 KB de heap. Recomendado ESP32 com
-  PSRAM para folga.
-- **Login hardcoded**: os 180 bytes do login vão em flash (`.rodata`). Não
-  tente gerar dinamicamente — o formato real é desconhecido.
-- **Não use TLS**: o protocolo é todo plaintext. O WiFi deve ser confiável
-  (rede local), o que é aceitável para uso doméstico.
-- **Banda de vídeo**: 260 KB/s × 8 = ~2 Mbps. WiFi 802.11n aguenta. Mas se a
-  câmera ficar longe do AP, perda de pacotes UDP derruba o frame inteiro —
-  implementar retry ou aceitar que alguns frames vão faltar.
-- **Descoberta**: `LanSearch` por broadcast UDP (destino
-  `255.255.255.255:32108` ou IP direto). No ESP32, `SO_BROADCAST` funciona via
-  `lwip`.
-- **C++ no ESP-IDF**: `../linux/serve.cpp` usa `std::thread`/`std::mutex`/`std::vector`.
-  No ESP-IDF funciona com `CONFIG_COMPILER_CXX_EXCEPTIONS=y` e `pthread`
-  habilitado, mas a recomendação é substituir por
-  `xTaskCreate`/`xSemaphoreCreateMutex` para reduzir overhead de heap.
+- **Sockets**: use `lwip_*` (POSIX-like API of ESP-IDF). `recvfrom`/`sendto`
+  work directly.
+- **Keepalive**: answer `P2PAlive` every 1s in <3s. Use `esp_timer` or a
+  dedicated task.
+- **HTTP MJPEG**: `esp_http_server` has no native support for
+  `multipart/x-mixed-replace` streaming. Two options: (a) use
+  `httpd_req_send_chunk()` manually (it works, but with workarounds); (b) use
+  raw TCP sockets + a minimal HTTP parser (this is what we did in
+  `../linux/serve.cpp`, ~80 lines).
+- **Memory**: each JPEG has ~16 KB. For double buffering (send the previous
+  frame while you assemble the next one), reserve ~40 KB of heap. An ESP32 with
+  PSRAM is recommended for margin.
+- **Hardcoded login**: the 180 login bytes go in flash (`.rodata`). Do not try
+  to generate them dynamically; the real format is unknown.
+- **Do not use TLS**: the protocol is all plaintext. The WiFi must be reliable
+  (local network), which is acceptable for home use.
+- **Video bandwidth**: 260 KB/s × 8 = ~2 Mbps. WiFi 802.11n can handle it. But
+  if the camera is far from the AP, UDP packet loss breaks the complete frame.
+  Implement a retry or accept that some frames will be missing.
+- **Discovery**: `LanSearch` by UDP broadcast (destination
+  `255.255.255.255:32108` or direct IP). On the ESP32, `SO_BROADCAST` works
+  through `lwip`.
+- **C++ on ESP-IDF**: `../linux/serve.cpp` uses
+  `std::thread`/`std::mutex`/`std::vector`. On ESP-IDF it works with
+  `CONFIG_COMPILER_CXX_EXCEPTIONS=y` and `pthread` enabled, but the
+  recommendation is to replace them with
+  `xTaskCreate`/`xSemaphoreCreateMutex` to reduce heap overhead.
 
-## 9. Limitações conhecidas
+## 9. Known limitations
 
-- **Não decodifica áudio** (o protocolo entrega, mas o formato do payload não
-  foi analisado).
-- **Não envia áudio** (o app suporta microfone no celular; não implementado).
-- **Não muda resolução** (só 640x480; o formato do VPS com outras resoluções
-  está em `impl.ts` do cam-reverse mas não testado).
-- **Não envia comandos PTZ** (pan/tilt/zoom) — existem comandos no `cam-reverse`
-  mas não fazem parte da captura usada.
-- **Login fixo**: o login de 180 bytes é do app oficial e foi copiado verbatim.
-  Se ele tiver um nonce variável por instalação/sessão, essa implementação pode
-  parar de funcionar em alguma versão do firmware da câmera. Testado em X5 com
-  firmware `BATE558596HDLZB`.
+- **Does not decode audio** (the protocol delivers it, but the payload format
+  was not analyzed).
+- **Does not send audio** (the app supports the phone microphone; not
+  implemented).
+- **Does not change the resolution** (only 640x480; the VPS format for other
+  resolutions is in `impl.ts` of cam-reverse but not tested).
+- **Does not send PTZ commands** (pan/tilt/zoom). Commands exist in
+  `cam-reverse`, but they are not part of the capture used.
+- **Fixed login**: the 180-byte login is from the official app and was copied
+  verbatim. If it has a nonce that changes for each installation/session, this
+  implementation can stop working on some camera firmware version. Tested on
+  the X5 with firmware `BATE558596HDLZB`.
 
-## 10. Referências
+## 10. References
 
-- [cam-reverse](https://github.com/DavidVentura/cam-reverse) — engenharia
-  reversa original do app
+- [cam-reverse](https://github.com/DavidVentura/cam-reverse) — original reverse
+  engineering of the app
 - [YunSync / 2BK-2](https://github.com/DavidVentura/cam-reverse/issues) —
-  discussões sobre o protocolo
-- Capturas usadas: `~/Downloads/PCAPdroid_03_nov._17_10_12.pcap` (app Android),
-  `~/Downloads/cam-reverse-trace-*.pcap` (implementação Linux)
+  protocol discussions
+- Captures used: `~/Downloads/PCAPdroid_03_nov._17_10_12.pcap` (Android app),
+  `~/Downloads/cam-reverse-trace-*.pcap` (Linux implementation)
 
-## 11. Implementação
+## 11. Implementation
 
-- Firmware ESP32-C3: [`../firmware/README.md`](../firmware/README.md)
-- Bring-up e medições de hardware: [`esp32-bringup.md`](esp32-bringup.md)
-- Referência Linux: [`../linux/README.md`](../linux/README.md)
+- ESP32-C3 firmware: [`../firmware/README.md`](../firmware/README.md)
+- Hardware bring-up and measurements: [`esp32-bringup.md`](esp32-bringup.md)
+- Linux reference: [`../linux/README.md`](../linux/README.md)

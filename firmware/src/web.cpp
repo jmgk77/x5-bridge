@@ -84,7 +84,7 @@ static String html_page(const String& title, const String& body,
                         bool refresh) {
   String h;
   h.reserve(body.length() + 512);
-  h += "<!DOCTYPE html><html lang='pt-br'><head><meta charset='UTF-8'>";
+  h += "<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'>";
   h += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
   h += "<meta http-equiv='cache-control' content='no-cache, no-store, must-revalidate'>";
   if (refresh) h += "<meta http-equiv='refresh' content='10'>";
@@ -180,8 +180,8 @@ static String config_page() {
   s += "<p>MQTT username: <input type='text' name='mqtt_server_username' value='" +
        html_escape(String(eeprom.mqtt_server_username)) + "'><br>";
   s += "MQTT password: <input type='text' name='mqtt_server_password' value='' placeholder='" +
-       String(eeprom.mqtt_server_password[0] ? "(mantido)" : "(vazio)") +
-       "'> <label><input type='checkbox' name='clear_mqtt_password'> limpar</label></p>";
+       String(eeprom.mqtt_server_password[0] ? "(kept)" : "(empty)") +
+       "'> <label><input type='checkbox' name='clear_mqtt_password'> clear</label></p>";
 
   for (int i = 0; i < MAX_CAMERAS; i++) {
     s += "<h3>CAM" + String(i) + " (port " +
@@ -200,11 +200,11 @@ static String config_page() {
     }
   }
 
-  s += "<p><input type='submit' value='SALVAR'></p>";
+  s += "<p><input type='submit' value='SAVE'></p>";
   s += "</form>";
   s += "<p>Max active cameras: " + String(MAX_ACTIVE_CAMERAS) +
        ". Extra enabled slots are ignored.</p>";
-  s += "<p><a href='/discover'><button>DESCOBRIR CAMERAS</button></a></p>";
+  s += "<p><a href='/discover'><button>DISCOVER CAMERAS</button></a></p>";
   s += nav_buttons();
   return html_page("X5 BRIDGE - CONFIG", s, false);
 }
@@ -278,7 +278,7 @@ static void handle_config(AsyncWebServerRequest* request) {
   save_eeprom();
   request->send(200, "text/html",
                 "<meta http-equiv='refresh' content='2; url=/'>"
-                "<html><body><p>Config salva. Reiniciando...</p></body></html>");
+                "<html><body><p>Config saved. Rebooting...</p></body></html>");
   schedule_restart(1500);
 }
 
@@ -287,12 +287,12 @@ static void handle_discover(AsyncWebServerRequest* request) {
   int n = discover_scan(found, MAX_CAMERAS * 2);
 
   String s;
-  s += "<h1>Descobrir cameras</h1>";
+  s += "<h1>Discover cameras</h1>";
   if (n == 0) {
-    s += "<p>Nenhuma camera encontrada. Verifique a rede ou informe o IP em "
+    s += "<p>No camera found. Check the network or enter the IP in "
          "<a href='/config'>CONFIG</a>.</p>";
   } else {
-    s += "<p>Encontradas: " + String(n) + "</p>";
+    s += "<p>Found: " + String(n) + "</p>";
     for (int i = 0; i < n; i++) {
       s += "<form method='post' action='/assign_camera'>";
       s += "<p><b>" + html_escape(String(found[i].name)) + "</b> - " +
@@ -308,11 +308,11 @@ static void handle_discover(AsyncWebServerRequest* request) {
         s += "<option value='" + String(k) + "'>CAM" + String(k) + " (port " +
              String(CAMERA_BASE_PORT + k) + ")</option>";
       }
-      s += "</select> <input type='submit' value='ATRIBUIR'></p>";
+      s += "</select> <input type='submit' value='ASSIGN'></p>";
       s += "</form>";
     }
   }
-  s += "<p><a href='/config'><button>VOLTAR</button></a></p>";
+  s += "<p><a href='/config'><button>BACK</button></a></p>";
   s += nav_buttons();
   request->send(200, "text/html",
                 html_page("X5 BRIDGE - DISCOVER", s, false));
@@ -362,7 +362,7 @@ static void handle_assign(AsyncWebServerRequest* request) {
   save_eeprom();
   request->send(200, "text/html",
                 "<meta http-equiv='refresh' content='2; url=/'>"
-                "<html><body><p>Camera atribuida. Reiniciando...</p></body></html>");
+                "<html><body><p>Camera assigned. Rebooting...</p></body></html>");
   schedule_restart(1500);
 }
 
@@ -380,8 +380,8 @@ static void handle_info(AsyncWebServerRequest* request) {
 static void handle_logs(AsyncWebServerRequest* request) {
   if (request->hasArg("clear")) clear_logs();
   String s = "<h1>Logs</h1>";
-  s += "<p><a href='/logs?clear=1'><button>LIMPAR</button></a>"
-       "<a href='/logs'><button>ATUALIZAR</button></a></p>";
+  s += "<p><a href='/logs?clear=1'><button>CLEAR</button></a>"
+       "<a href='/logs'><button>REFRESH</button></a></p>";
   s += "<pre style='background:#222;color:#0f0;padding:10px;max-height:70vh;"
        "overflow:auto;white-space:pre-wrap'>";
   s += html_escape(get_logs());
@@ -393,7 +393,7 @@ static void handle_logs(AsyncWebServerRequest* request) {
 static void handle_reboot(AsyncWebServerRequest* request) {
   request->send(200, "text/html",
                 "<meta http-equiv='refresh' content='5; url=/'>"
-                "<html><body><p>Reiniciando...</p></body></html>");
+                "<html><body><p>Rebooting...</p></body></html>");
   schedule_restart(1500);
 }
 
@@ -410,7 +410,7 @@ static void factory_reset_task(void* arg) {
 static void handle_reset(AsyncWebServerRequest* request) {
   request->send(200, "text/html",
                 "<meta http-equiv='refresh' content='5; url=/'>"
-                "<html><body><p>Resetando para padroes de fabrica...</p></body></html>");
+                "<html><body><p>Resetting to factory defaults...</p></body></html>");
   xTaskCreate(factory_reset_task, "factory_reset", 4096, NULL, 1, NULL);
 }
 

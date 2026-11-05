@@ -1,16 +1,16 @@
-# Referência Linux
+# Linux reference
 
-Implementação de referência do protocolo X5 em C++ para Linux. Foi usada para
-validar a engenharia reversa antes do port para ESP32-C3 e continua útil para
-diagnóstico.
+Reference implementation of the X5 protocol in C++ for Linux. It was used to
+validate the reverse engineering before the port to the ESP32-C3 and is still
+useful for diagnosis.
 
-## Arquivos
+## Files
 
-- `session.cpp` — faz discovery, login, imprime o ticket e salva os JPEGs em
-  `frame0.jpg`, `frame1.jpg`, ...; roda por 30 s.
-- `serve.cpp` — sobe um servidor HTTP com `/video` (MJPEG) e `/snapshot`
-  (JPEG) e mantém a sessão com a câmera.
-- `Makefile` — compila os dois binários.
+- `session.cpp` — does discovery and login, prints the ticket, and saves the
+  JPEGs to `frame0.jpg`, `frame1.jpg`, ...; it runs for 30 s.
+- `serve.cpp` — starts an HTTP server with `/video` (MJPEG) and `/snapshot`
+  (JPEG) and keeps the session with the camera.
+- `Makefile` — builds the two binaries.
 
 ## Build
 
@@ -18,8 +18,8 @@ diagnóstico.
 make -C linux
 ```
 
-Requisitos: `g++` com C++11/`pthread` e headers POSIX (Linux). Os binários
-`linux/serve` e `linux/session` são ignorados pelo git.
+Requirements: `g++` with C++11/`pthread` and POSIX headers (Linux). The binaries
+`linux/serve` and `linux/session` are ignored by git.
 
 ## `session`
 
@@ -27,18 +27,18 @@ Requisitos: `g++` com C++11/`pthread` e headers POSIX (Linux). Os binários
 ./linux/session <camera-ip>
 ```
 
-Exemplo:
+Example:
 
 ```bash
 cd /tmp
 /home/keres/Dropbox/WORK/x5-bridge-cpp/linux/session 192.168.0.10
 ```
 
-Saída típica: logs de LAN search, `PunchPkt`, ticket, `VideoParamSet`,
-`StartVideo`, contagem de JPEGs e, ao final, `got_ticket=1 jpegs=N`.
+Typical output: LAN search logs, `PunchPkt`, ticket, `VideoParamSet`,
+`StartVideo`, JPEG count, and, at the end, `got_ticket=1 jpegs=N`.
 
-Os arquivos `frame*.jpg` são gravados no diretório atual. Use um diretório
-temporário para não sujar o repositório:
+The `frame*.jpg` files are written to the current directory. Use a temporary
+directory to keep the repository clean:
 
 ```bash
 mkdir -p /tmp/x5frames && cd /tmp/x5frames
@@ -51,31 +51,31 @@ mkdir -p /tmp/x5frames && cd /tmp/x5frames
 ./linux/serve <camera-ip> [http-port]
 ```
 
-Exemplo:
+Example:
 
 ```bash
 ./linux/serve 192.168.0.10 8080
 ```
 
-Depois abra:
+Then open:
 
 - `http://localhost:8080/video`
 - `http://localhost:8080/snapshot`
 
-O `serve` mantém a sessão aberta e reassembla os JPEGs; o browser recebe MJPEG
-em `multipart/x-mixed-replace`.
+`serve` keeps the session open and reassembles the JPEGs; the browser receives
+MJPEG in `multipart/x-mixed-replace`.
 
-## Aviso
+## Warning
 
-A câmera atende **uma sessão por vez**. Não rode `serve`/`session` enquanto o
-firmware do ESP32-C3 estiver usando a câmera (o bridge mantém a sessão viva).
-Se a câmera estiver ocupada, o `LanSearch` pode não responder e o programa
-termina com `!! no PunchPkt`.
+The camera serves **one session at a time**. Do not run `serve`/`session` while
+the ESP32-C3 firmware uses the camera (the bridge keeps the session alive). If
+the camera is busy, the `LanSearch` can fail to answer and the program ends with
+`!! no PunchPkt`.
 
-Para liberar a câmera, pare o processo que estiver usando ou desabilite o slot
-no bridge (`/config` → desmarcar `enabled`) e reinicie.
+To release the camera, stop the process that uses it or disable the slot in the
+bridge (`/config` → clear `enabled`) and reboot.
 
-## Protocolo
+## Protocol
 
-Os detalhes de discovery, handshake, login, ticket, criptografia e mídia estão
-em [`../docs/protocol.md`](../docs/protocol.md).
+The details of discovery, handshake, login, ticket, encryption, and media are in
+[`../docs/protocol.md`](../docs/protocol.md).

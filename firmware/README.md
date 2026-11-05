@@ -1,38 +1,38 @@
-# Firmware ESP32-C3 / S3 / ESP32-CAM / ESP32 DevKit — X5 Bridge
+# ESP32-C3 / S3 / ESP32-CAM / ESP32 DevKit firmware — X5 Bridge
 
-Firmware do bridge para câmeras X5, com alvos **ESP32-C3**, **ESP32-S3**,
-**ESP32-CAM** e **ESP32 DevKit**. Usa o mesmo stack dos outros devices da casa:
-`ESPAsyncWiFiManager`, `ESPAsyncWebServer`, `ESPAsyncHTTPUpdateServer` e
-`PicoMQTT`. O vídeo usa TCP raw em portas separadas do servidor de
-administração.
+Bridge firmware for X5 cameras, with targets **ESP32-C3**, **ESP32-S3**,
+**ESP32-CAM** and **ESP32 DevKit**. It uses the same stack as the other devices
+in the house: `ESPAsyncWiFiManager`, `ESPAsyncWebServer`,
+`ESPAsyncHTTPUpdateServer` and `PicoMQTT`. The video uses raw TCP on ports
+separate from the administration server.
 
 ## Hardware
 
-- ESP32-C3 (testado: QFN32 rev v0.4, 4 MB flash, sem PSRAM, single-core).
-- ESP32-S3 (testado: 4 MB flash, 2 MB PSRAM, dual-core 240 MHz).
-- ESP32-CAM (AI-Thinker, 4 MB flash, 2 MB PSRAM, CH340; câmera onboard não é
-  usada pelo bridge).
-- ESP32 DevKit (D0WD-V3, 4 MB flash, sem PSRAM, CP2102).
-- USB nativo/JTAG (C3/S3) ou USB-UART CH340/CP2102 (CAM/DevKit).
+- ESP32-C3 (tested: QFN32 rev v0.4, 4 MB flash, no PSRAM, single-core).
+- ESP32-S3 (tested: 4 MB flash, 2 MB PSRAM, dual-core 240 MHz).
+- ESP32-CAM (AI-Thinker, 4 MB flash, 2 MB PSRAM, CH340; the bridge does not use
+  the onboard camera).
+- ESP32 DevKit (D0WD-V3, 4 MB flash, no PSRAM, CP2102).
+- Native USB/JTAG (C3/S3) or USB-UART CH340/CP2102 (CAM/DevKit).
 - WiFi 2.4 GHz.
 
-## Estrutura do projeto
+## Project structure
 
 ```
 firmware/
   platformio.ini
-  buildscript_versioning.py     # gera include/version.h e incrementa versioning
-  copy_firmware.py              # copia o .bin para a raiz do projeto
-  versioning                    # contador de build
+  buildscript_versioning.py     # generates include/version.h and increments versioning
+  copy_firmware.py              # copies the .bin to the project root
+  versioning                    # build counter
   include/
-    main.h  config.h  version.h (gerado)
+    main.h  config.h  version.h (generated)
     eeprom.h  web.h  mqtt.h  camera.h  stream.h  dump.h  logger.h
   src/
     main.cpp  eeprom.cpp  web.cpp  mqtt.cpp
     camera.cpp  stream.cpp  dump.cpp  logger.cpp
 ```
 
-## Build e gravação
+## Build and flash
 
 ```bash
 # ESP32-C3
@@ -45,92 +45,93 @@ firmware/
 ~/.platformio/penv/bin/pio run -d firmware -e esp32s3 -t upload
 ~/.platformio/penv/bin/pio run -d firmware -e esp32s3 -t monitor
 
-# ESP32-CAM (CH340 em /dev/ttyUSB0, 4 MB flash + 2 MB PSRAM)
+# ESP32-CAM (CH340 on /dev/ttyUSB0, 4 MB flash + 2 MB PSRAM)
 ~/.platformio/penv/bin/pio run -d firmware -e esp32cam
 ~/.platformio/penv/bin/pio run -d firmware -e esp32cam -t upload
 ~/.platformio/penv/bin/pio run -d firmware -e esp32cam -t monitor
 
-# ESP32 DevKit (CP2102 em /dev/ttyUSB0, sem PSRAM)
+# ESP32 DevKit (CP2102 on /dev/ttyUSB0, no PSRAM)
 ~/.platformio/penv/bin/pio run -d firmware -e esp32dev
 ~/.platformio/penv/bin/pio run -d firmware -e esp32dev -t upload
 ~/.platformio/penv/bin/pio run -d firmware -e esp32dev -t monitor
 ```
 
-O `platformio.ini` tem uma seção `[env]` comum e quatro envs:
+The `platformio.ini` file has a common `[env]` section and four envs:
 
-- comuns: `platform = espressif32@7.1.3`, `min_spiffs.csv` (app0/app1 de
-  1,875 MB, LittleFS de 128 KB), `littlefs` e as libs;
+- common: `platform = espressif32@7.1.3`, `min_spiffs.csv` (app0/app1 of
+  1.875 MB, LittleFS of 128 KB), `littlefs`, and the libraries;
 - `esp32c3`: `board = esp32-c3-devkitm-1`, USB CDC;
-- `esp32s3`: `board = esp32-s3-devkitc-1`,
-  `board_upload.flash_size = 4MB`, `board_build.arduino.memory_type = qio_qspi`
-  e `-DBOARD_HAS_PSRAM`;
+- `esp32s3`: `board = esp32-s3-devkitc-1`, `board_upload.flash_size = 4MB`,
+  `board_build.arduino.memory_type = qio_qspi`, and `-DBOARD_HAS_PSRAM`;
 - `esp32cam`: `board = esp32cam`, upload 460800, `-DBOARD_HAS_PSRAM`,
-  `MAX_ACTIVE_CAMERAS=2` e default name `x5bridge-cam`;
-- `esp32dev`: `board = esp32dev`, upload 115200, `MAX_ACTIVE_CAMERAS=1` e
+  `MAX_ACTIVE_CAMERAS=2`, and default name `x5bridge-cam`;
+- `esp32dev`: `board = esp32dev`, upload 115200, `MAX_ACTIVE_CAMERAS=1`, and
   default name `x5bridge-dev`.
 
-Os `upload_port`/`monitor_port` usam `/dev/serial/by-id/...` no C3/S3 e
-`/dev/ttyUSB0` no CAM/DevKit. CAM e DevKit compartilham `/dev/ttyUSB0`;
-conecte um por vez. O firmware ocupa ~0,93–1,00 MB (≈48–51% do slot de app). O
-`.bin` final fica em `.pio/build/<env>/firmware.bin` e também é copiado para
+The `upload_port`/`monitor_port` use `/dev/serial/by-id/...` on the C3/S3 and
+`/dev/ttyUSB0` on the CAM/DevKit. CAM and DevKit share `/dev/ttyUSB0`; connect
+one at a time. The firmware uses ~0.93–1.00 MB (≈48–51% of the app slot). The
+final `.bin` is in `.pio/build/<env>/firmware.bin` and is also copied to
 `firmware/firmware.bin`.
 
-## Primeiro boot e configuração
+## First boot and configuration
 
-1. No primeiro boot, o device sobe um AP aberto: **`x5bridge`** (C3/S3),
-   **`x5bridge-cam`** (ESP32-CAM) ou **`x5bridge-dev`** (DevKit).
-2. Conecte um celular/notebook nesse AP e abra `http://192.168.4.1`.
-3. Escolha a rede WiFi e informe a senha.
-4. O device reinicia e passa a responder em `http://x5bridge.local/`,
-   `http://x5bridge-cam.local/` ou `http://x5bridge-dev.local/`.
+1. On the first boot, the device starts an open AP: **`x5bridge`** (C3/S3),
+   **`x5bridge-cam`** (ESP32-CAM), or **`x5bridge-dev`** (DevKit).
+2. Connect a cell phone or notebook to this AP and open `http://192.168.4.1`.
+3. Select the WiFi network and enter the password.
+4. The device reboots and responds at `http://x5bridge.local/`,
+   `http://x5bridge-cam.local/`, or `http://x5bridge-dev.local/`.
 
-A configuração fica em NVS (`Preferences`, namespace `x5bridge`). O portal do
-WiFiManager cuida apenas do WiFi; o resto é configurado na página.
+The configuration is in NVS (`Preferences`, namespace `x5bridge`). The
+WiFiManager portal handles only WiFi; the page configures the rest.
 
 ### `/config`
 
-- `device_name` — nome do device e raiz dos tópicos MQTT (default `x5bridge`
-  no C3/S3, `x5bridge-cam` no CAM e `x5bridge-dev` no DevKit), sanitizado para
-  `[A-Za-z0-9_-]`;
-- broker MQTT: IP, porta, usuário e senha;
-- 4 slots de câmera (`CAM0`..`CAM3`): nome, IP e habilitado;
-- portas fixas por slot: `CAM0`=8080, `CAM1`=8081, `CAM2`=8082, `CAM3`=8083;
-- câmeras ativas: C3=**2**, S3=**4**, CAM=**2**, DevKit=**1**.
+- `device_name` — device name and MQTT topic root (default `x5bridge` on the
+  C3/S3, `x5bridge-cam` on the CAM, and `x5bridge-dev` on the DevKit),
+  sanitized to `[A-Za-z0-9_-]`;
+- MQTT broker: IP, port, user, and password;
+- 4 camera slots (`CAM0`..`CAM3`): name, IP, and enabled;
+- fixed port for each slot: `CAM0`=8080, `CAM1`=8081, `CAM2`=8082, `CAM3`=8083;
+- active cameras: C3=**2**, S3=**4**, CAM=**2**, DevKit=**1**.
 
-Ao salvar, o device reinicia para aplicar a configuração. O reinício é agendado
-(1,5 s) para o servidor terminar de enviar a resposta HTTP.
+When you save, the device reboots to apply the configuration. The reboot is
+scheduled (1.5 s) so that the server can send the HTTP response.
 
 ### `/discover`
 
-Faz `LanSearch` por broadcast e por broadcast da sub-rede, coleta os `PunchPkt`
-por ~2 s e lista as câmeras com nome (extraído do pacote) e IP. A atribuição a
-um slot salva o IP, o nome e o `punch` e reinicia o device.
+Sends `LanSearch` by broadcast and by subnet broadcast, collects the `PunchPkt`
+for ~2 s, and lists the cameras with name (from the packet) and IP. The
+assignment to a slot saves the IP, the name, and the `punch`, then reboots the
+device.
 
-Se a câmera estiver ocupada (por exemplo, com `linux/serve` ou o app oficial),
-ela pode não responder ao `LanSearch` e não aparecer na lista.
+If the camera is busy (for example, with `linux/serve` or the official app), it
+can fail to answer the `LanSearch` and does not appear in the list.
 
 ## Endpoints
 
-| Porta | Caminho | Função |
+| Port | Path | Function |
 |---|---|---|
-| 80 | `/` | status: versão, IP, MAC, uptime, heap, RSSI, broker, câmeras e links |
-| 80 | `/config` | configuração (GET/POST) |
-| 80 | `/discover` | descoberta de câmeras |
-| 80 | `/info` | dumps de ESP32, FS e configuração |
-| 80 | `/logs` | logs (RAM + `/system.log` no LittleFS); `?clear=1` limpa |
+| 80 | `/` | status: version, IP, MAC, uptime, heap, RSSI, broker, cameras, and links |
+| 80 | `/config` | configuration (GET/POST) |
+| 80 | `/discover` | camera discovery |
+| 80 | `/info` | ESP32, FS, and configuration dumps |
+| 80 | `/logs` | logs (RAM + `/system.log` in LittleFS); `?clear=1` clears them |
 | 80 | `/update` | OTA multipart `.bin` |
-| 80 | `/reboot` | reinicia |
-| 80 | `/reset` | apaga LittleFS, configuração e WiFi (não testado em produção) |
-| 8080+ | `/video` | MJPEG contínuo |
-| 8080+ | `/snapshot` | JPEG único |
+| 80 | `/reboot` | reboot |
+| 80 | `/reset` | erase LittleFS, configuration, and WiFi (not tested in production) |
+| 8080+ | `/video` | continuous MJPEG |
+| 8080+ | `/snapshot` | single JPEG |
 
-`/video` responde com `multipart/x-mixed-replace; boundary=x5frame`. O primeiro
-frame já vem completo. `/snapshot` responde `503` enquanto não houver frame.
+`/video` responds with `multipart/x-mixed-replace; boundary=x5frame`. The first
+frame is already complete. `/snapshot` responds `503` while there is no frame.
 
 ## MQTT
 
-O cliente usa `PicoMQTT::Client`. A raiz é `device_name` (default `x5bridge`) e
-o anúncio é repetido a cada 5 s (`MQTT_ANNOUNCE_INTERVAL_MS`).
+The client uses `PicoMQTT::Client`. The root is `device_name` (default
+`x5bridge`) and the announcement repeats every 5 s
+(`MQTT_ANNOUNCE_INTERVAL_MS`).
 
 ```
 <root>/DESCRIPTION   <root>/IP          <root>/STATUS
@@ -141,170 +142,175 @@ o anúncio é repetido a cada 5 s (`MQTT_ANNOUNCE_INTERVAL_MS`).
 <root>/CAM0/CLIENTS      <root>/CAM0/FPS      <root>/CAM0/LAST_FRAME
 ```
 
-- `DESCRIPTION` = `<device_name> <VERSION>`, com versão, data, hash e branch
-  gerados no build.
-- `STATUS` = `ONLINE`; o LWT publica `OFFLINE`.
-- `CAMn/URL` e `CAMn/SNAPSHOT` já apontam para o IP atual.
-- O broker testado (`192.168.0.250`) não preserva `retained`; por isso o
-  anúncio periódico curto. Em um broker que preserve, os tópicos funcionam como
+- `DESCRIPTION` = `<device_name> <VERSION>`, with version, date, hash, and branch
+  generated at build time.
+- `STATUS` = `ONLINE`; the LWT publishes `OFFLINE`.
+- `CAMn/URL` and `CAMn/SNAPSHOT` already point to the current IP.
+- The tested broker (`192.168.0.250`) does not keep `retained`; thus the short
+  periodic announcement. On a broker that keeps `retained`, the topics work as
   retained.
 
-## Arquitetura
+## Architecture
 
-### Tarefas
+### Tasks
 
-- **`camera_task`** (prioridade 5, core 0): sockets UDP por câmera, `poll`, ACK
-  de cada pacote, keepalive (`P2PAlive`), extração do ticket, envio de VPS/SV e
-  montagem dos JPEGs. Timeout de 5 s sem pacotes → relogin.
-- **`stream_task`** (prioridade 4, core 1 no S3/CAM/DevKit e core 0 no C3):
-  listeners TCP 8080+, parser HTTP mínimo, envio com timeout de socket (1 s) e
-  descarte/limite de clientes.
-- **Loop principal**: `handle_web()` (mDNS é do stack) e `handle_mqtt()`;
-  verifica o reinício agendado.
-- **Async web server** e **PicoMQTT** rodam em suas próprias tarefas.
+- **`camera_task`** (priority 5, core 0): UDP sockets for each camera, `poll`,
+  ACK for each packet, keepalive (`P2PAlive`), ticket extraction, VPS/SV send,
+  and JPEG assembly. Timeout of 5 s with no packets → re-login.
+- **`stream_task`** (priority 4, core 1 on the S3/CAM/DevKit and core 0 on the
+  C3): TCP listeners 8080+, minimal HTTP parser, send with socket timeout (1 s),
+  and client drop/limit.
+- **Main loop**: `handle_web()` (mDNS is part of the stack) and `handle_mqtt()`;
+  checks the scheduled reboot.
+- **Async web server** and **PicoMQTT** run in their own tasks.
 
-### Memória e buffers
+### Memory and buffers
 
-- Cada câmera ativa aloca **2 × 24 KB** (montagem + último JPEG).
-- No S3 e no ESP32-CAM esses buffers vão para a **PSRAM** (fallback para RAM
-  interna); no C3/DevKit ficam na RAM interna.
-- O `stream_task` usa um buffer compartilhado de **24 KB** para enviar sem
-  segurar o mutex da câmera.
-- Limites: `MAX_ACTIVE_CAMERAS` = C3 **2**, S3 **4**, CAM **2**, DevKit **1**;
+- Each active camera allocates **2 × 24 KB** (assembly + last JPEG).
+- On the S3 and ESP32-CAM, these buffers go to **PSRAM** (fallback to internal
+  RAM); on the C3/DevKit, they stay in internal RAM.
+- `stream_task` uses a shared buffer of **24 KB** to send without holding the
+  camera mutex.
+- Limits: `MAX_ACTIVE_CAMERAS` = C3 **2**, S3 **4**, CAM **2**, DevKit **1**;
   `MAX_CLIENTS_PER_STREAM = 2`.
-- C3 com uma câmera + um cliente: heap ~70–77 KB livre (mín. ~50 KB).
-- S3 com uma câmera + um cliente: heap ~200 KB livre e PSRAM ~2 MB livre.
-- ESP32-CAM com uma câmera + um cliente: heap ~146–158 KB livre e PSRAM
-  ~2,05 MB (buffers na PSRAM).
-- ESP32 DevKit com uma câmera: heap ~107 KB livre (mín. ~86 KB), buffers na RAM
-  interna.
-- A segunda câmera só inicia se a alocação couber; caso contrário o slot fica
-  offline com log de `BUFFER FAIL`.
+- C3 with one camera + one client: heap ~70–77 KB free (min. ~50 KB).
+- S3 with one camera + one client: heap ~200 KB free and PSRAM ~2 MB free.
+- ESP32-CAM with one camera + one client: heap ~146–158 KB free and PSRAM
+  ~2.05 MB (buffers in PSRAM).
+- ESP32 DevKit with one camera: heap ~107 KB free (min. ~86 KB), buffers in
+  internal RAM.
+- The second camera starts only if the allocation fits; if not, the slot stays
+  offline with a `BUFFER FAIL` log.
 
-### Sessão da câmera
+### Camera session
 
-Fluxo implementado em `camera.cpp`:
+Flow implemented in `camera.cpp`:
 
 ```
 LanSearch -> PunchPkt -> P2pRdy -> login 180B -> DrwAck
           -> ConnectUserAck (ticket) -> VideoParamSet + StartVideo
-          -> stream=1 (ACK por pacote) + P2PAlive
+          -> stream=1 (ACK for each packet) + P2PAlive
 ```
 
-O login de 180 bytes é hardcoded (copiado do app oficial). A sessão não é
-encerrada quando não há espectador; a câmera continua enviando e o firmware
-mantém o último frame para `/snapshot` e para novos clientes.
+The 180-byte login is hardcoded (copied from the official app). The session does
+not end when there is no viewer; the camera continues to send and the firmware
+keeps the last frame for `/snapshot` and for new clients.
 
-## Versionamento
+## Versioning
 
-- `buildscript_versioning.py` roda como `pre:` e:
-  - incrementa o arquivo `versioning`;
-  - gera `include/version.h` com `VERSION`, `BUILD_NUMBER` e `VERSION_SHORT`
-    no formato `v0.1.N - data [hash|branch]`.
-- `copy_firmware.py` roda como `post:` e copia o `.bin` para a raiz de
+- `buildscript_versioning.py` runs as `pre:` and:
+  - increments the `versioning` file;
+  - generates `include/version.h` with `VERSION`, `BUILD_NUMBER`, and
+    `VERSION_SHORT` in the format `v0.1.N - date [hash|branch]`.
+- `copy_firmware.py` runs as `post:` and copies the `.bin` to the root of
   `firmware/`.
-- `include/version.h` e `firmware.bin` são ignorados pelo git.
+- `include/version.h` and `firmware.bin` are ignored by git.
 
-## Validação
+## Validation
 
-Executada com a câmera `BATE558596HDLZB` em `192.168.0.10`:
+Run with camera `BATE558596HDLZB` at `192.168.0.10`:
 
 | Item | C3 | S3 | CAM | DevKit |
 |---|---|---|---|---|
-| Build/flash | OK (~0,98 MB) | OK (~0,93 MB) | OK (~1,00 MB) | OK (~0,99 MB) |
+| Build/flash | OK (~0.98 MB) | OK (~0.93 MB) | OK (~1.00 MB) | OK (~0.99 MB) |
 | WiFi + portal + mDNS | OK | OK | OK | OK |
 | PSRAM + dual-core | — | OK (2 MB) | OK (2 MB) | — |
 | `discover` | OK | OK | OK | OK |
-| `/video` e `/snapshot` | OK | OK | OK | OK |
+| `/video` and `/snapshot` | OK | OK | OK | OK |
 | MQTT | OK | OK | OK | OK |
 | OTA `.bin` | OK | OK | OK | OK |
-| `/config` + reinício | OK | OK | OK | OK |
+| `/config` + reboot | OK | OK | OK | OK |
 | `/reboot` | OK | OK | OK | OK |
-| Soak 10 min | OK, sem reboot | não repetido | não repetido | não repetido |
-| `/reset` | não testado | não testado | não testado | não testado |
-| 2 câmeras | não testado | parcial (CAM1 OK; CAM0 travou) | OK (baixo FPS) | não testado |
+| 10 min soak | OK, no reboot | not repeated | not repeated | not repeated |
+| `/reset` | not tested | not tested | not tested | not tested |
+| 2 cameras | not tested | partial (CAM1 OK; CAM0 stalled) | OK (low FPS) | not tested |
 
-Medições:
+Measurements:
 
-- câmera nativa (Linux `session`): ~11,9 fps (358 frames/30 s);
-- C3 (RSSI ~-50 dBm): ~10 fps sem cliente; ~7,7 fps com 1 cliente; heap ~87 KB
-  livre (mín. ~50 KB);
-- S3 (RSSI ~-64/-65 dBm): ~9 fps sem cliente; ~7,5 fps com 1 cliente; heap
-  ~204 KB livre e PSRAM ~2 MB;
-- ESP32-CAM (RSSI ~-57/-58 dBm): ~7,7 fps sem cliente; ~6,8 fps com 1 cliente;
-  heap ~158 KB livre e PSRAM ~2,05 MB;
-- ESP32 DevKit (RSSI ~-48 dBm): ~5,9 fps sem cliente; ~4,3 fps com 1 cliente;
-  heap ~161 KB ocioso / ~107 KB com câmera (mín. ~86 KB);
-- 2 câmeras no ESP32-CAM (RSSI ~-57/-58): CAM0 4,07/2,03 fps e CAM1
-  6,73/6,13 fps (ocioso/1 cliente); heap ~148 KB (mín. ~115 KB), PSRAM ~2 MB;
-- 2 câmeras no S3: CAM1 `.71` ~9–15 fps inicial; CAM0 `.10` ONLINE com 0
-  frames (sessão travada);
-- antena externa do ESP32-CAM: RSSI não melhorou (-58/-61 dBm);
+- native camera (Linux `session`): ~11.9 fps (358 frames/30 s);
+- C3 (RSSI ~-50 dBm): ~10 fps with no client; ~7.7 fps with 1 client; heap ~87
+  KB free (min. ~50 KB);
+- S3 (RSSI ~-64/-65 dBm): ~9 fps with no client; ~7.5 fps with 1 client; heap
+  ~204 KB free and PSRAM ~2 MB;
+- ESP32-CAM (RSSI ~-57/-58 dBm): ~7.7 fps with no client; ~6.8 fps with 1
+  client; heap ~158 KB free and PSRAM ~2.05 MB;
+- ESP32 DevKit (RSSI ~-48 dBm): ~5.9 fps with no client; ~4.3 fps with 1 client;
+  heap ~161 KB idle / ~107 KB with camera (min. ~86 KB);
+- 2 cameras on the ESP32-CAM (RSSI ~-57/-58): CAM0 4.07/2.03 fps and CAM1
+  6.73/6.13 fps (idle/1 client); heap ~148 KB (min. ~115 KB), PSRAM ~2 MB;
+- 2 cameras on the S3: CAM1 `.71` ~9–15 fps initial; CAM0 `.10` ONLINE with 0
+  frames (stalled session);
+- external antenna of the ESP32-CAM: RSSI did not improve (-58/-61 dBm);
 - JPEG ~18–22 KB;
-- soak no C3: 601→6103 frames (~9,6 fps médio), heap estável.
+- soak on the C3: 601→6103 frames (~9.6 fps average), stable heap.
 
-Os ~16 fps do doc original não se reproduziram nesta câmera; o modo atual entrega
-~12 fps. No S3, o FPS não subiu porque o RSSI estava ~15 dB pior que o do C3; o
-limitador foi o WiFi, não CPU/RAM. No CAM/DevKit, o rádio ESP32 clássico limita o
-FPS; a PSRAM do CAM ajuda a memória, mas não o rádio.
+The ~16 fps from the original doc did not reproduce on this camera; the current
+mode gives ~12 fps. On the S3, the FPS did not increase because the RSSI was
+~15 dB worse than the C3; the limiter was WiFi, not CPU/RAM. On the CAM/DevKit,
+the classic ESP32 radio limits the FPS; the CAM PSRAM helps memory, but not the
+radio.
 
-## Limitações e pendências
+## Limitations and open items
 
-- Admin/OTA abertos, sem autenticação (decisão de projeto; LAN).
-- `/reset` implementado, mas não testado em produção.
-- Reconexão após queda de energia da câmera não foi testada explicitamente.
-- Teste com 2 câmeras: ESP32-CAM funcional mas com FPS baixo (rádio clássico);
-  S3 parcial (CAM1 `.71` OK, CAM0 `.10` travou). Limite: C3=2, S3=4, CAM=2,
-  DevKit=1; cada stream aceita 2 clientes.
-- Câmera `.10` pode ficar ONLINE com ticket e **0 frames** após trocas de
-  bridge; power-cycle e re-login limpo resolvem. A `.71` também precisou de
-  power-cycle uma vez.
-- Antena externa do ESP32-CAM: RSSI não melhorou (-58/-61); verificar seleção
-  PCB/externa.
-- Broker sem `retained` no teste.
-- FPS abaixo do documentado originalmente (~12 fps nativos nesta câmera).
-- S3 testado com RSSI ~-64/-65 dBm contra ~-50 dBm do C3; o FPS ficou limitado
-  pelo WiFi. Com antena/posição melhor, o S3 deve se aproximar do teto (~12 fps).
-- ESP32-CAM: a câmera onboard da board usada como bridge está quebrada e não é
-  usada; o bridge usa a câmera X5 externa. O rádio ESP32 clássico limita o FPS
-  (~7,7/6,8). Veja [`../docs/esp32cam-boards.md`](../docs/esp32cam-boards.md).
-- ESP32 DevKit: sem PSRAM, 1 câmera ativa e ~5,9/4,3 fps; serve como bancada de
-  teste, não como alvo de performance.
+- Admin/OTA open, without authentication (design decision; LAN).
+- `/reset` implemented, but not tested in production.
+- Reconnection after a camera power loss was not tested explicitly.
+- 2-camera test: ESP32-CAM works but with low FPS (classic radio); S3 partial
+  (CAM1 `.71` OK, CAM0 `.10` stalled). Limit: C3=2, S3=4, CAM=2, DevKit=1; each
+  stream accepts 2 clients.
+- Camera `.10` can stay ONLINE with a ticket and with **0 frames** after bridge
+  changes; a power cycle and a clean re-login solve it. The `.71` also needed a
+  power cycle one time.
+- External antenna of the ESP32-CAM: RSSI did not improve (-58/-61); check the
+  PCB/external selection.
+- Broker without `retained` in the test.
+- FPS below the value in the original document (~12 fps native on this camera).
+- S3 tested with RSSI ~-64/-65 dBm against ~-50 dBm for the C3; the FPS was
+  limited by WiFi. With a better antenna/position, the S3 should approach the
+  ceiling (~12 fps).
+- ESP32-CAM: the onboard camera of the board used as the bridge is broken and
+  is not used; the bridge uses the external X5 camera. The classic ESP32 radio
+  limits the FPS (~7.7/6.8). See
+  [`../docs/esp32cam-boards.md`](../docs/esp32cam-boards.md).
+- ESP32 DevKit: no PSRAM, 1 active camera, and ~5.9/4.3 fps; use it as a test
+  bench, not as a performance target.
 
 ## Troubleshooting
 
-- **Portal não aparece**: aguarde o timeout de conexão; o AP é `x5bridge`
-  (C3/S3), `x5bridge-cam` (CAM) ou `x5bridge-dev` (DevKit). Se necessário,
-  redefina configuração e WiFi via `/reset`.
-- **Câmera não aparece no `discover`**: verifique se ela está na mesma sub-rede
-  e se não está ocupada por `linux/serve`, `linux/session` ou pelo app oficial.
-- **`/video` abre mas não mostra imagem**: confira `/snapshot`; se retornar
-  `503`, a câmera ainda não produziu frame (login/ticket).
-- **MQTT não conecta**: confirme broker/porta/usuário/senha em `/config` e se o
-  broker aceita conexões anônimas.
-- **OTA falha**: use `.bin` (não `.gz`); o `Update` do ESP32 não descomprime
+- **Portal does not appear**: wait for the connection timeout; the AP is
+  `x5bridge` (C3/S3), `x5bridge-cam` (CAM), or `x5bridge-dev` (DevKit). If
+  necessary, reset the configuration and WiFi with `/reset`.
+- **Camera does not appear in `discover`**: make sure that it is on the same
+  subnet and that `linux/serve`, `linux/session`, or the official app does not
+  use it.
+- **`/video` opens but shows no image**: check `/snapshot`; if it returns `503`,
+  the camera has not produced a frame yet (login/ticket).
+- **MQTT does not connect**: confirm the broker/port/user/password at `/config`
+  and that the broker accepts anonymous connections.
+- **OTA fails**: use `.bin` (not `.gz`); the ESP32 `Update` does not decompress
   gzip.
-- **S3 com FPS baixo/RSSI ruim**: confira a antena (PCB vs externa/jumper) e
-  aproxime do AP; o S3 testado ficou ~15 dB pior que o C3.
-- **ESP32-CAM/DevKit não aparecem**: os dois usam `/dev/ttyUSB0`; conecte um por
-  vez. Upload do CAM em 460800 e do DevKit em 115200.
-- **ESP32-CAM reinicia/boot loop**: confira o flat/ribbon da câmera onboard e a
-  alimentação 5 V; o bridge não usa a câmera onboard. Veja
+- **S3 with low FPS/bad RSSI**: check the antenna (PCB vs external/jumper) and
+  move closer to the AP; the tested S3 was ~15 dB worse than the C3.
+- **ESP32-CAM/DevKit do not appear**: both use `/dev/ttyUSB0`; connect one at a
+  time. CAM upload at 460800 and DevKit upload at 115200.
+- **ESP32-CAM reboots/boot loop**: check the onboard camera flat/ribbon and the
+  5 V supply; the bridge does not use the onboard camera. See
   [`../docs/esp32cam-boards.md`](../docs/esp32cam-boards.md).
-- **Câmera ONLINE com 0 frames**: sessão de vídeo travada; power-cycle na
-  câmera e, se possível, desabilite/reative o slot depois que ela responder ao
+- **Camera ONLINE with 0 frames**: stalled video session; power cycle the
+  camera and, if possible, disable/enable the slot after it answers the
   `discover`.
-- **Duas câmeras no ESP32-CAM**: funciona, mas o rádio clássico satura; o FPS
-  total fica ~1 câmera e a CAM0 cai mais com cliente.
-- **Antena externa no ESP32-CAM**: se o RSSI não mudar, confira a seleção
-  PCB/externa (jumper/resistor) e o contato do u.FL.
-- **Não rode `linux/serve`/`linux/session` junto com o bridge**: a câmera atende
-  uma sessão por vez.
+- **Two cameras on the ESP32-CAM**: it works, but the classic radio saturates;
+  the total FPS stays at ~1 camera and CAM0 drops more with a client.
+- **External antenna on the ESP32-CAM**: if the RSSI does not change, check the
+  PCB/external selection (jumper/resistor) and the u.FL contact.
+- **Do not run `linux/serve`/`linux/session` together with the bridge**: the
+  camera serves one session at a time.
 
-## Documentação relacionada
+## Related documentation
 
-- [`../docs/protocol.md`](../docs/protocol.md) — protocolo.
-- [`../docs/esp32-bringup.md`](../docs/esp32-bringup.md) — bring-up e medições.
-- [`../docs/esp32cam-boards.md`](../docs/esp32cam-boards.md) — comparativo das
-  três ESP32-CAM.
-- [`../linux/README.md`](../linux/README.md) — referência Linux.
+- [`../docs/protocol.md`](../docs/protocol.md) — protocol.
+- [`../docs/esp32-bringup.md`](../docs/esp32-bringup.md) — bring-up and
+  measurements.
+- [`../docs/esp32cam-boards.md`](../docs/esp32cam-boards.md) — comparison of the
+  three ESP32-CAM boards.
+- [`../linux/README.md`](../linux/README.md) — Linux reference.

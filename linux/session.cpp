@@ -1,5 +1,5 @@
-// Port direto de impl.ts (makeDataReadWrite, SendVideoResolution, SendStartVideo)
-// e handlers.ts (makeDrwAck). Replica o fluxo que funciona no cam-reverse.
+// Direct port of impl.ts (makeDataReadWrite, SendVideoResolution, SendStartVideo)
+// and handlers.ts (makeDrwAck). Replicates the flow that works in cam-reverse.
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -21,7 +21,7 @@ static int hex2bin(const char* h, uint8_t* o, int m) {
     return b;
 }
 
-// XqBytesEnc exato do func_replacements.js
+// Exact XqBytesEnc from func_replacements.js
 static void xq_enc(uint8_t* buf, int len, int rot) {
     uint8_t* nb = (uint8_t*)malloc(len);
     for (int i = 0; i < len; i++) nb[i] = (buf[i] & 1) ? (buf[i]-1) : (buf[i]+1);
@@ -30,7 +30,7 @@ static void xq_enc(uint8_t* buf, int len, int rot) {
     free(nb);
 }
 
-// XqBytesDec exato do func_replacements.js
+// Exact XqBytesDec from func_replacements.js
 static void xq_dec(uint8_t* buf, int len, int rot) {
     uint8_t* nb = (uint8_t*)malloc(len);
     for (int i = 0; i < len; i++) nb[i] = (buf[i] & 1) ? (buf[i]-1) : (buf[i]+1);
@@ -41,8 +41,8 @@ static void xq_dec(uint8_t* buf, int len, int rot) {
 
 static uint16_t u16_swap(uint16_t x) { return (x >> 8) | (x << 8); }
 
-// Port de makeDataReadWrite (impl.ts linhas 7-22)
-// Retorna o tamanho total do pacote.
+// Port of makeDataReadWrite (impl.ts lines 7-22)
+// Returns the total packet size.
 static int make_data_read_write(uint8_t* out, uint16_t cmd, uint16_t id,
                                  const uint8_t* ticket,
                                  const uint8_t* data, int data_len) {
@@ -72,8 +72,8 @@ static int make_data_read_write(uint8_t* out, uint16_t cmd, uint16_t id,
     return pkt_len;
 }
 
-// Port de makeDrwAck (handlers.ts linhas 377-407)
-// Retorna o tamanho do ACK.
+// Port of makeDrwAck (handlers.ts lines 377-407)
+// Returns the ACK size.
 static int make_drw_ack(uint8_t* out, uint8_t stream, uint16_t pkt_id) {
     uint16_t reply_len = 1 * 2 + 4; // item_count*2 + 4
     memset(out, 0, 32);
@@ -146,7 +146,7 @@ int main(int argc, char** argv) {
             uint8_t stream = buf[5];
             uint16_t dcmd = (buf[10] << 8) | buf[11];
 
-            // ACK sempre (igual makeDrwAck)
+            // Always ACK (same as makeDrwAck)
             uint8_t ack[32];
             int ack_len = make_drw_ack(ack, stream, id);
             sendto(sock, ack, ack_len, 0, (struct sockaddr*)&cam, sizeof(cam));
@@ -157,7 +157,7 @@ int main(int argc, char** argv) {
                 uint8_t stype = is_framed ? buf[12] : 0;
 
                 if (is_framed && stype == 0x03) {
-                    // inicio de novo JPEG: fecha o anterior
+                    // start of a new JPEG: close the previous one
                     if (cur_frame_len > 100) {
                         int end_i = -1;
                         for (int i = 0; i < cur_frame_len-1; i++)
@@ -172,7 +172,7 @@ int main(int argc, char** argv) {
                         }
                     }
                     cur_frame_len = 0;
-                    // nao adiciona nada: o SOI vem no proximo pacote
+                    // add nothing: the SOI comes in the next packet
                 }
                 else if (is_framed && stype == 0x06) {
                     // audio, ignore
@@ -186,7 +186,7 @@ int main(int argc, char** argv) {
                 continue;
             }
 
-            // stream == 0, controle
+            // stream == 0, control
             if (dcmd == 0x2011 && !got_ticket) {
                 // ConnectUserAck: decrypt payload (offset 20, len-4), ticket @ 0x18
                 int payload_len = (buf[12] | (buf[13] << 8)); // readU16LE
@@ -199,8 +199,8 @@ int main(int argc, char** argv) {
                 printf("    << ConnectUserAck (id=%u), ticket=%02x%02x%02x%02x\n",
                        id, ticket[0], ticket[1], ticket[2], ticket[3]);
 
-                // === startVideoStream: VPS + SV juntos (igual TS) ===
-                // VPS: payload 640x480 = [01,00,00,00,02,00,00,00], encriptado
+                // === startVideoStream: VPS + SV together (same as TS) ===
+                // VPS: 640x480 payload = [01,00,00,00,02,00,00,00], encrypted
                 uint8_t vp_payload[8] = { 0x01, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00 };
                 xq_enc(vp_payload, 8, 4);
                 uint8_t vps[64];
@@ -208,7 +208,7 @@ int main(int argc, char** argv) {
                 sendto(sock, vps, vps_len, 0, (struct sockaddr*)&cam, sizeof(cam));
                 printf("    >> VideoParamSet id=1 (%dB)\n", vps_len);
 
-                // SV: sem payload
+                // SV: no payload
                 uint8_t sv[64];
                 int sv_len = make_data_read_write(sv, 0x1030, 2, ticket, NULL, 0);
                 sendto(sock, sv, sv_len, 0, (struct sockaddr*)&cam, sizeof(cam));
