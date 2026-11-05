@@ -354,6 +354,15 @@ for (int i = 0; i < len-1; i++) if (buf[i]==0xff && buf[i+1]==0xd9) end = i;
 if (end > 0) emit(buf, end + 2);   // inclusive
 ~~~
 
+**Resynchronization**: the `type=03` marker can be lost (UDP) or emitted
+sparsely by some units/models. Since every JPEG starts with `ff d8` (SOI) at
+the start of a raw packet, an implementation can use it as a fallback boundary:
+if a raw packet begins with `ff d8` while a buffer is being assembled, close
+(or discard) the previous buffer and start a new frame there. This avoids
+merging several JPEGs into one buffer. The X5 units tested are not identical:
+`BATE558596HDLZB` and `BATE583547ANCGG` behaved differently (the first emitted
+~2–3 fps in bursts, the second ~10–15 fps at the same 320x240 setting).
+
 ### Observed metrics
 
 - **FPS**: ~16 fps (640x480)

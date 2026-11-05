@@ -92,7 +92,9 @@ WiFiManager portal handles only WiFi; the page configures the rest.
   C3/S3, `x5bridge-cam` on the CAM, and `x5bridge-dev` on the DevKit),
   sanitized to `[A-Za-z0-9_-]`;
 - MQTT broker: IP, port, user, and password;
-- 4 camera slots (`CAM0`..`CAM3`): name, IP, and enabled;
+- 4 camera slots (`CAM0`..`CAM3`): name, IP, resolution (`640x480` or
+  `320x240`), and enabled; 320x240 cuts the bitrate ~4x and is the main lever
+  against UDP packet loss;
 - fixed port for each slot: `CAM0`=8080, `CAM1`=8081, `CAM2`=8082, `CAM3`=8083;
 - active cameras: C3=**2**, S3=**4**, CAM=**2**, DevKit=**1**.
 
@@ -113,7 +115,7 @@ can fail to answer the `LanSearch` and does not appear in the list.
 
 | Port | Path | Function |
 |---|---|---|
-| 80 | `/` | status: version, IP, MAC, uptime, heap, RSSI, broker, cameras, and links |
+| 80 | `/` | status: version, IP, MAC, uptime, heap, RSSI, broker, cameras (frames, drop, recovered, FPS), and links |
 | 80 | `/config` | configuration (GET/POST) |
 | 80 | `/discover` | camera discovery |
 | 80 | `/info` | ESP32, FS, and configuration dumps |
@@ -156,7 +158,9 @@ The client uses `PicoMQTT::Client`. The root is `device_name` (default
 
 - **`camera_task`** (priority 5, core 0): UDP sockets for each camera, `poll`,
   ACK for each packet, keepalive (`P2PAlive`), ticket extraction, VPS/SV send,
-  and JPEG assembly. Timeout of 5 s with no packets → re-login.
+  and JPEG assembly. Timeout of 5 s with no packets → re-login. If the ticket
+  is valid but no frame arrives for 15 s (keepalives still keep the session
+  "online"), the session is restarted (media-stall recovery).
 - **`stream_task`** (priority 4, core 1 on the S3/CAM/DevKit and core 0 on the
   C3): TCP listeners 8080+, minimal HTTP parser, send with socket timeout (1 s),
   and client drop/limit.
@@ -195,6 +199,29 @@ LanSearch -> PunchPkt -> P2pRdy -> login 180B -> DrwAck
 The 180-byte login is hardcoded (copied from the official app). The session does
 not end when there is no viewer; the camera continues to send and the firmware
 keeps the last frame for `/snapshot` and for new clients.
+
+### Packet loss handling
+
+Media packets carry an incremental `id` (bytes 6–7). The assembly tracks the
+expected next `id` per camera:
+
+- forward jumps are counted as lost packets (the gap is reflected in the loss
+  percentage);
+- late/duplicate packets (lower `id`) are dropped instead of being appended out
+  of order, which would corrupt the JPEG.
+
+A frame is only published when the JPEG is complete (`FF D8`..`FF D9`) **and**
+the estimated loss is at most `CAMERA_FRAME_LOSS_LIMIT` (30%). Frames above the
+limit are counted in the `Drop` column of `/` and the previous good frame is
+kept. This avoids showing heavily corrupted frames without zeroing the FPS when
+the loss is small. WiFi power save is disabled so the radio does not sleep
+between packets, and each camera socket requests a 32 KB receive buffer.
+
+If a camera loses the `type=03` frame markers (some models send them sparsely),
+several JPEGs would be merged into one buffer and dropped. As a fallback
+(`CAMERA_SOI_FALLBACK`), a raw packet whose payload starts with `FF D8` closes
+the previous frame and starts a new one. The `Recov` column of `/` counts how
+many boundaries were recovered this way.
 
 ## Versioning
 
@@ -260,7 +287,12 @@ radio.
   stream accepts 2 clients.
 - Camera `.10` can stay ONLINE with a ticket and with **0 frames** after bridge
   changes; a power cycle and a clean re-login solve it. The `.71` also needed a
-  power cycle one time.
+  power cycle one time. The media-stall detection (15 s) redoes the handshake
+  automatically, but a camera already wedged may still need a power cycle.
+- Camera model matters: `.10` (`BATE558596HDLZB`) emits only ~2–3 fps in
+  bursts, even with motion in front of it; `.71` (`BATE583547ANCGG`, on the
+  bench next to the AP) stays at ~10–15 fps with ~0% loss. The bridge cannot
+  exceed the camera's own frame rate.
 - External antenna of the ESP32-CAM: RSSI did not improve (-58/-61); check the
   PCB/external selection.
 - Broker without `retained` in the test.
@@ -296,9 +328,19 @@ radio.
 - **ESP32-CAM reboots/boot loop**: check the onboard camera flat/ribbon and the
   5 V supply; the bridge does not use the onboard camera. See
   [`../docs/esp32cam-boards.md`](../docs/esp32cam-boards.md).
-- **Camera ONLINE with 0 frames**: stalled video session; power cycle the
-  camera and, if possible, disable/enable the slot after it answers the
-  `discover`.
+- **Camera ONLINE with 0 frames**: stalled video session. The firmware detects
+  15 s without frames and restarts the session; if it does not recover, power
+  cycle the camera and, if possible, disable/enable the slot after it answers
+  the `discover`.
+- **One camera much slower than the other**: compare the model suffix in the
+  punch (`/config` shows it) and the frame size. A remote unit can be limited
+  by its own model/link: in the final test `BATE558596HDLZB` (`.10`) did ~2–3
+  fps even at 320x240 and with motion, while `BATE583547ANCGG` (`.71`) did
+  ~10–15 fps. Try 320x240, then move/repower the unit; the bridge cannot create
+  frames the camera does not send.
+- **Frames with `Recov` increasing**: the `type=03` marker was lost and the
+  assembler resynchronized on the JPEG `FF D8`. That is expected and better
+  than merging frames.
 - **Two cameras on the ESP32-CAM**: it works, but the classic radio saturates;
   the total FPS stays at ~1 camera and CAM0 drops more with a client.
 - **External antenna on the ESP32-CAM**: if the RSSI does not change, check the

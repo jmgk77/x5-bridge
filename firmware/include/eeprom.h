@@ -10,6 +10,7 @@ struct camera_config {
   char ip[16];
   uint16_t port;
   bool enabled;
+  uint8_t resolution;
 };
 
 struct eeprom_data {

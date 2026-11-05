@@ -19,6 +19,7 @@ void default_eeprom() {
   for (int i = 0; i < MAX_CAMERAS; i++) {
     eeprom.cameras[i].port = CAMERA_BASE_PORT + i;
     eeprom.cameras[i].enabled = false;
+    eeprom.cameras[i].resolution = DEFAULT_CAMERA_RESOLUTION;
   }
 }
 
@@ -47,12 +48,20 @@ void init_eeprom() {
     preferences.putBytes("config", &eeprom, sizeof(eeprom_data));
   }
 
+  bool changed = false;
   for (int i = 0; i < MAX_CAMERAS; i++) {
     if (eeprom.cameras[i].port < CAMERA_BASE_PORT ||
         eeprom.cameras[i].port >= CAMERA_BASE_PORT + MAX_CAMERAS) {
       eeprom.cameras[i].port = CAMERA_BASE_PORT + i;
+      changed = true;
+    }
+    if (eeprom.cameras[i].resolution != CAMERA_RES_320X240 &&
+        eeprom.cameras[i].resolution != CAMERA_RES_640X480) {
+      eeprom.cameras[i].resolution = DEFAULT_CAMERA_RESOLUTION;
+      changed = true;
     }
   }
+  if (changed) preferences.putBytes("config", &eeprom, sizeof(eeprom_data));
 
   preferences.end();
 }

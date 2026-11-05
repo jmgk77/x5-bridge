@@ -114,8 +114,8 @@ static String nav_buttons() {
 static String camera_table() {
   String s = "<h3>Cameras</h3>";
   s += "<table><tr><th>Slot</th><th>Name</th><th>IP</th><th>Status</th>";
-  s += "<th>Frames</th><th>FPS</th><th>Last frame</th><th>Clients</th>";
-  s += "<th>Stream</th></tr>";
+  s += "<th>Frames</th><th>Drop</th><th>Recov</th><th>FPS</th><th>Last frame</th>";
+  s += "<th>Clients</th><th>Stream</th></tr>";
 
   String ip = WiFi.localIP().toString();
   for (int i = 0; i < MAX_CAMERAS; i++) {
@@ -127,6 +127,8 @@ static String camera_table() {
     s += "<td>" + html_escape(String(st.ip)) + "</td>";
     s += "<td>" + String(st.online ? "ONLINE" : "OFFLINE") + "</td>";
     s += "<td>" + String(st.frames) + "</td>";
+    s += "<td>" + String(st.dropped) + "</td>";
+    s += "<td>" + String(st.recovered) + "</td>";
     s += "<td>" + String(st.fps, 1) + "</td>";
     if (st.last_frame_ms) {
       s += "<td>" + String(st.last_frame_ms) + " ms</td>";
@@ -191,6 +193,16 @@ static String config_page() {
          "'> ";
     s += "IP: <input type='text' name='cam" + String(i) + "_ip' value='" +
          html_escape(String(eeprom.cameras[i].ip)) + "'> ";
+    uint8_t res = eeprom.cameras[i].resolution;
+    if (res != CAMERA_RES_320X240 && res != CAMERA_RES_640X480) {
+      res = DEFAULT_CAMERA_RESOLUTION;
+    }
+    s += "Res: <select name='cam" + String(i) + "_res'>";
+    s += "<option value='" + String(CAMERA_RES_640X480) + "'" +
+         String(res == CAMERA_RES_640X480 ? " selected" : "") + ">640x480</option>";
+    s += "<option value='" + String(CAMERA_RES_320X240) + "'" +
+         String(res == CAMERA_RES_320X240 ? " selected" : "") + ">320x240</option>";
+    s += "</select> ";
     s += "<label><input type='checkbox' name='cam" + String(i) +
          "_enabled' " + String(eeprom.cameras[i].enabled ? "checked" : "") +
          "> enabled</label></p>";
@@ -251,7 +263,18 @@ static void handle_config(AsyncWebServerRequest* request) {
     String name_key = "cam" + String(i) + "_name";
     String ip_key = "cam" + String(i) + "_ip";
     String en_key = "cam" + String(i) + "_enabled";
+    String res_key = "cam" + String(i) + "_res";
 
+    if (request->hasParam(res_key, true)) {
+      int res = request->getParam(res_key, true)->value().toInt();
+      if (res == CAMERA_RES_320X240 || res == CAMERA_RES_640X480) {
+        eeprom.cameras[i].resolution = (uint8_t)res;
+      }
+    }
+    if (eeprom.cameras[i].resolution != CAMERA_RES_320X240 &&
+        eeprom.cameras[i].resolution != CAMERA_RES_640X480) {
+      eeprom.cameras[i].resolution = DEFAULT_CAMERA_RESOLUTION;
+    }
     if (request->hasParam(name_key, true)) {
       strlcpy(eeprom.cameras[i].name,
               request->getParam(name_key, true)->value().c_str(),
@@ -348,6 +371,10 @@ static void handle_assign(AsyncWebServerRequest* request) {
     }
   }
 
+  if (eeprom.cameras[slot].resolution != CAMERA_RES_320X240 &&
+      eeprom.cameras[slot].resolution != CAMERA_RES_640X480) {
+    eeprom.cameras[slot].resolution = DEFAULT_CAMERA_RESOLUTION;
+  }
   eeprom.cameras[slot].port = CAMERA_BASE_PORT + slot;
   eeprom.cameras[slot].enabled = true;
 
@@ -435,6 +462,9 @@ void init_web() {
   }
 
   xlog_printf("WIFI OK: %s\n", WiFi.localIP().toString().c_str());
+
+  WiFi.setSleep(false);
+  xlog_println("WIFI power save disabled");
 
   String host = String(eeprom.device_name);
   host.toLowerCase();

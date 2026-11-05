@@ -18,6 +18,8 @@ struct CameraStatus {
   char ip[16];
   uint16_t port;
   uint32_t frames;
+  uint32_t dropped;
+  uint32_t recovered;
   float fps;
   uint32_t last_frame_ms;
   int clients;

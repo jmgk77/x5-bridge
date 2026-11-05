@@ -10,7 +10,10 @@ The firmware provides:
 - camera discovery on the LAN;
 - login/ticket and a continuous P2P session;
 - MJPEG video at `/video` and JPEG at `/snapshot` (one port for each camera);
-- a web page for status, configuration, discovery, logs and OTA;
+- a web page for status, configuration, discovery, logs and OTA, including a
+  per-camera resolution selector (`640x480` or `320x240`);
+- packet-loss-aware JPEG assembly (id/gap tracking, `FF D8` resynchronization)
+  and media-stall recovery;
 - MQTT announcement in the same format as the other devices in the house;
 - mDNS (`x5bridge.local`) and a captive portal for WiFi configuration.
 
@@ -31,6 +34,12 @@ The firmware provides:
   radio saturates (CAM0 4.07/2.03 fps; CAM1 6.73/6.13 fps idle/client). On the
   S3, CAM1 (`.71`) worked well; CAM0 (`.10`) stayed ONLINE with a ticket but 0
   frames, and needed a power cycle / clean sequence.
+- **Final 2-camera S3 test (320x240)**: CAM1 `BATE583547ANCGG` (`.71`, on the
+  bench next to the AP) ran at ~10–15 fps with ~0% packet loss. CAM0
+  `BATE558596HDLZB` (`.10`, remote) stayed at ~2–3 fps even with a person moving
+  in front of it, in bursts, with 5–20% loss per frame. This points to the
+  camera model/link on `.10`, not the bridge. See
+  [`firmware/README.md`](firmware/README.md#packet-loss-handling).
 - The external antenna of the ESP32-CAM did not improve the RSSI in the test
   (-58/-61 dBm); the PCB/external selection is probably not active.
 - The S3 had RSSI ~-64/-65 dBm against ~-50 dBm for the C3; the FPS was limited
@@ -179,7 +188,7 @@ Build details, endpoints, memory, and limitations are in
 | `/reboot` | OK | OK | OK | OK |
 | 10 min soak | OK | not repeated | not repeated | not repeated |
 | `/reset` | not tested | not tested | not tested | not tested |
-| 2 cameras at the same time | not tested | partial (CAM1 OK; CAM0 stalled) | OK (low FPS) | not tested |
+| 2 cameras at the same time | not tested | partial (CAM1 OK; CAM0 ~2–3 fps) | OK (low FPS) | not tested |
 
 Measurements with one camera:
 
@@ -197,6 +206,9 @@ Measurements with one camera:
   client; CAM1 6.73 / 6.13; heap ~148 KB (min. ~115 KB), PSRAM ~2.0 MB;
 - **2 cameras** on the S3: CAM1 `.71` ~9–15 fps initial; CAM0 `.10` ONLINE with
   0 frames (stalled session);
+- **2 cameras at 320x240** on the S3: CAM1 `.71` ~10–15 fps, ~0% loss; CAM0
+  `.10` ~2–3 fps, 5–20% loss per accepted frame, unaffected by motion in front
+  of the camera (measured over 50 s);
 - external antenna of the ESP32-CAM: RSSI did not improve (-58/-61 dBm);
 - JPEG ~18–22 KB; 10 min soak on the C3 with ~9.6 fps average.
 
@@ -217,7 +229,17 @@ but not the radio.
   stream accepts 2 clients. With 1 camera + 1 client, the C3 minimum is ~50 KB.
 - Camera `.10` can stay ONLINE (with a ticket) and with **0 frames** after
   bridge changes; a power cycle and a clean re-login solve it. The `.71` also
-  needed a power cycle one time.
+  needed a power cycle one time. The firmware now detects a media stall (15 s
+  without frames) and redoes the handshake automatically, but a camera that is
+  already wedged may still need a power cycle.
+- Camera model matters: `.10` is `BATE558596HDLZB` and `.71` is
+  `BATE583547ANCGG`. In the final test, `.10` emitted only ~2–3 fps in bursts
+  regardless of scene motion, while `.71` stayed at ~10–15 fps. The bridge
+  cannot raise the FPS above what the camera sends.
+- `.10` frames are large for 320x240 (~14–18 KB), so its packets/frame and
+  airtime are higher than `.71` (~9–13 KB). Lowering JPEG quality/bitrate would
+  be the next lever, but the documented VPS payload only exposes the
+  resolution.
 - External antenna of the ESP32-CAM: RSSI did not improve (-58/-61); check the
   PCB/external selection.
 - The broker at `192.168.0.250` does not keep `retained`; if you need this,

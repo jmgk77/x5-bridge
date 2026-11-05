@@ -30,13 +30,21 @@ struct CameraSession {
   uint8_t ticket[4];
   struct sockaddr_in addr;
   uint32_t last_rx;
+  uint32_t ticket_ms;
   uint32_t last_action;
   uint32_t frames;
+  uint32_t dropped;
+  uint32_t recovered;
   uint32_t last_frame_ms;
   uint32_t frame_seq;
   uint32_t fps_count;
   uint32_t fps_window_start;
   float fps;
+  uint16_t frame_start_id;
+  uint16_t media_last_id;
+  uint16_t media_stride;
+  uint32_t frame_rx;
+  bool frame_open;
   uint8_t* assemble;
   size_t assemble_len;
   uint8_t* last_jpeg;
@@ -158,7 +166,11 @@ static void send_p2prdy_and_login(int slot) {
 
 static void send_vps_sv(int slot) {
   CameraSession& s = sessions[slot];
-  uint8_t vp_payload[8] = {0x01, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00};
+  uint8_t res = eeprom.cameras[slot].resolution;
+  if (res != CAMERA_RES_320X240 && res != CAMERA_RES_640X480) {
+    res = DEFAULT_CAMERA_RESOLUTION;
+  }
+  uint8_t vp_payload[8] = {0x01, 0x00, 0x00, 0x00, res, 0x00, 0x00, 0x00};
   xq_enc(vp_payload, 8, 4);
 
   uint8_t pkt[64];
@@ -170,59 +182,134 @@ static void send_vps_sv(int slot) {
   xlog_printf("CAM%d VPS+SV SENT\n", slot);
 }
 
-static void finalize_frame(int slot, uint32_t now) {
-  CameraSession& s = sessions[slot];
-  if (s.assemble_len <= 100) return;
+static uint32_t frame_loss_pct(uint16_t start_id, uint16_t next_id,
+                               uint16_t stride, uint32_t rx) {
+  if (stride == 0) return 100;
+  uint16_t span = (uint16_t)(next_id - start_id);
+  uint32_t slots = span / stride;
+  uint32_t expected = slots > 0 ? slots - 1 : 0;
+  if (expected == 0) return 100;
+  uint32_t lost = expected > rx ? expected - rx : 0;
+  uint32_t pct = (lost * 100u) / expected;
+  return pct > 100 ? 100 : pct;
+}
 
-  int end_i = -1;
-  for (size_t i = 0; i + 1 < s.assemble_len; i++) {
-    if (s.assemble[i] == 0xff && s.assemble[i + 1] == 0xd9) end_i = i;
+static void finalize_frame(int slot, uint32_t now, uint16_t next_framed_id) {
+  CameraSession& s = sessions[slot];
+  if (!s.frame_open) return;
+  s.frame_open = false;
+
+  uint32_t loss_pct = frame_loss_pct(s.frame_start_id, next_framed_id,
+                                     s.media_stride, s.frame_rx);
+
+  size_t frame_len = 0;
+  if (s.assemble_len > 100) {
+    int end_i = -1;
+    for (size_t i = 0; i + 1 < s.assemble_len; i++) {
+      if (s.assemble[i] == 0xff && s.assemble[i + 1] == 0xd9) end_i = i;
+    }
+    if (end_i > 0 && s.assemble[0] == 0xff && s.assemble[1] == 0xd8) {
+      size_t len = end_i + 2;
+      if (len <= MAX_JPEG_SIZE) frame_len = len;
+    }
   }
 
-  if (end_i > 0 && s.assemble[0] == 0xff && s.assemble[1] == 0xd8) {
-    size_t frame_len = end_i + 2;
-    if (frame_len <= MAX_JPEG_SIZE) {
-      camera_lock();
-      memcpy(s.last_jpeg, s.assemble, frame_len);
-      s.last_jpeg_len = frame_len;
-      s.frame_seq++;
-      s.frames++;
-      s.last_frame_ms = now;
-      s.fps_count++;
-      if (now - s.fps_window_start >= CAMERA_FPS_WINDOW_MS) {
-        s.fps = s.fps_count * 1000.0f / (float)(now - s.fps_window_start);
-        s.fps_count = 0;
-        s.fps_window_start = now;
-      }
-      camera_unlock();
+  if (frame_len > 0 && loss_pct <= CAMERA_FRAME_LOSS_LIMIT) {
+    camera_lock();
+    memcpy(s.last_jpeg, s.assemble, frame_len);
+    s.last_jpeg_len = frame_len;
+    s.frame_seq++;
+    s.frames++;
+    s.last_frame_ms = now;
+    s.fps_count++;
+    if (now - s.fps_window_start >= CAMERA_FPS_WINDOW_MS) {
+      s.fps = s.fps_count * 1000.0f / (float)(now - s.fps_window_start);
+      s.fps_count = 0;
+      s.fps_window_start = now;
+    }
+    camera_unlock();
 
-      if (s.frames <= 3 || s.frames % 100 == 0) {
-        xlog_printf("CAM%d JPEG %u (%u B) fps=%.1f\n", slot,
-                   (unsigned)s.frames, (unsigned)frame_len, s.fps);
-      }
+    if (s.frames <= 3 || s.frames % 100 == 0) {
+      xlog_printf("CAM%d JPEG %u (%u B) loss=%u%% fps=%.1f\n", slot,
+                  (unsigned)s.frames, (unsigned)frame_len, (unsigned)loss_pct,
+                  s.fps);
+    }
+  } else {
+    s.dropped++;
+    if (s.dropped <= 3 || s.dropped % 25 == 0) {
+      xlog_printf("CAM%d FRAME DROP loss=%u%% rx=%u (%u B)\n", slot,
+                  (unsigned)loss_pct, (unsigned)s.frame_rx,
+                  (unsigned)frame_len);
     }
   }
 }
 
-static void process_media(int slot, const uint8_t* buf, int n, uint32_t now) {
+static void start_frame(CameraSession& s, uint16_t id) {
+  s.frame_start_id = id;
+  s.media_last_id = id;
+  s.frame_rx = 0;
+  s.frame_open = true;
+  s.assemble_len = 0;
+}
+
+static void process_media(int slot, const uint8_t* buf, int n, uint32_t now,
+                          uint16_t id) {
   CameraSession& s = sessions[slot];
   bool is_framed = (n >= 13 && buf[8] == 0x55 && buf[9] == 0xaa &&
                     buf[10] == 0x15 && buf[11] == 0xa8);
   uint8_t stype = is_framed ? buf[12] : 0;
 
   if (is_framed && stype == 0x03) {
-    finalize_frame(slot, now);
-    s.assemble_len = 0;
-  } else if (is_framed && stype == 0x06) {
-    // audio, ignored
-  } else if (!is_framed && n > 8) {
-    size_t chunk = n - 8;
-    if (s.assemble_len + chunk <= MAX_JPEG_SIZE) {
-      memcpy(s.assemble + s.assemble_len, buf + 8, chunk);
-      s.assemble_len += chunk;
-    } else {
-      s.assemble_len = 0;
+    finalize_frame(slot, now, id);
+    start_frame(s, id);
+    return;
+  }
+
+  if (!s.frame_open) return;
+
+  uint16_t jump = (uint16_t)(id - s.media_last_id);
+  if (jump == 0 || jump >= 0x8000) {
+    return;
+  }
+  if (s.media_stride == 0 || jump < s.media_stride) {
+    s.media_stride = jump;
+  }
+  s.media_last_id = id;
+
+  if (is_framed) {
+    s.frame_rx++;
+    return;
+  }
+  if (n <= 8) return;
+
+#if CAMERA_SOI_FALLBACK
+  bool soi = n >= 10 && buf[8] == 0xff && buf[9] == 0xd8;
+  // A new JPEG begins mid-assembly: the type=03 marker was lost (or the
+  // previous frame never started with SOI). Close/discard the current buffer
+  // and resynchronize on this packet instead of merging several JPEGs.
+  if (soi && s.assemble_len > 100) {
+    finalize_frame(slot, now, id);
+    uint16_t stride = s.media_stride ? s.media_stride : 1;
+    start_frame(s, id);
+    // This packet belongs to the new frame (id is data, not a marker), so
+    // shift the synthetic start back by one stride to keep the loss math
+    // balanced with the type=03 case.
+    s.frame_start_id = (uint16_t)(id - stride);
+    s.recovered++;
+    if (s.recovered <= 3 || s.recovered % 50 == 0) {
+      xlog_printf("CAM%d SOI BOUNDARY (recovered=%u)\n", slot,
+                  (unsigned)s.recovered);
     }
+  }
+#endif
+
+  s.frame_rx++;
+  size_t chunk = n - 8;
+  if (s.assemble_len + chunk <= MAX_JPEG_SIZE) {
+    memcpy(s.assemble + s.assemble_len, buf + 8, chunk);
+    s.assemble_len += chunk;
+  } else {
+    s.assemble_len = 0;
   }
 }
 
@@ -238,7 +325,7 @@ static void process_drw(int slot, uint8_t* buf, int n, uint32_t now) {
   send_to_session(s, ack, ack_len);
 
   if (stream == 1) {
-    process_media(slot, buf, n, now);
+    process_media(slot, buf, n, now, id);
     return;
   }
 
@@ -252,6 +339,7 @@ static void process_drw(int slot, uint8_t* buf, int n, uint32_t now) {
 
     camera_lock();
     s.got_ticket = true;
+    s.ticket_ms = now;
     s.last_rx = now;
     camera_unlock();
 
@@ -293,6 +381,19 @@ static void process_packet(int slot, uint8_t* buf, int n, uint32_t now) {
   }
 }
 
+static void restart_session(int slot, uint32_t now, const char* reason) {
+  CameraSession& s = sessions[slot];
+  xlog_printf("CAM%d %s, RESTARTING\n", slot, reason);
+  s.got_punch = false;
+  s.got_ticket = false;
+  s.frame_open = false;
+  s.frame_rx = 0;
+  s.media_stride = 0;
+  s.assemble_len = 0;
+  s.last_action = now;
+  send_lan_search(slot);
+}
+
 static void camera_task(void* arg) {
   (void)arg;
   static uint8_t rxbuf[2048];
@@ -318,7 +419,7 @@ static void camera_task(void* arg) {
         if (!(fds[k].revents & POLLIN)) continue;
         int slot = slots[k];
 
-        for (int drain = 0; drain < 16; drain++) {
+        for (int drain = 0; drain < 32; drain++) {
           struct sockaddr_in from;
           socklen_t fromlen = sizeof(from);
           int n = recvfrom(fds[k].fd, rxbuf, sizeof(rxbuf), 0,
@@ -347,12 +448,11 @@ static void camera_task(void* arg) {
           s.last_action = now;
         }
       } else if (now - s.last_rx > CAMERA_RX_TIMEOUT_MS) {
-        xlog_printf("CAM%d TIMEOUT, RESTARTING\n", i);
-        s.got_punch = false;
-        s.got_ticket = false;
-        s.assemble_len = 0;
-        s.last_action = now;
-        send_lan_search(i);
+        restart_session(i, now, "TIMEOUT");
+      } else if (s.frames == 0
+                     ? (now - s.ticket_ms > CAMERA_MEDIA_STALL_MS)
+                     : (now - s.last_frame_ms > CAMERA_MEDIA_STALL_MS)) {
+        restart_session(i, now, "MEDIA STALL");
       }
     }
 
@@ -391,6 +491,11 @@ static bool start_session(int slot) {
 
   int flags = fcntl(fd, F_GETFL, 0);
   fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+  int rcvbuf = CAMERA_SOCKET_RX_BUFFER;
+  if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf)) < 0) {
+    xlog_printf("CAM%d SO_RCVBUF not available\n", slot);
+  }
 
   struct sockaddr_in local;
   memset(&local, 0, sizeof(local));
@@ -497,6 +602,8 @@ bool camera_get_status(int slot, CameraStatus* out) {
     out->got_ticket = s.got_ticket;
     out->online = s.got_ticket && (millis() - s.last_rx < CAMERA_RX_TIMEOUT_MS);
     out->frames = s.frames;
+    out->dropped = s.dropped;
+    out->recovered = s.recovered;
     out->fps = s.fps;
     out->last_frame_ms = s.last_frame_ms ? (millis() - s.last_frame_ms) : 0;
   }

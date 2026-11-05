@@ -82,6 +82,10 @@ String html_dump_config() {
     s += "name=" + String(eeprom.cameras[i].name) + " ";
     s += "ip=" + String(eeprom.cameras[i].ip) + " ";
     s += "port=" + String(eeprom.cameras[i].port) + " ";
+    s += "resolution=" +
+         String(eeprom.cameras[i].resolution == CAMERA_RES_320X240 ? "320x240"
+                                                                   : "640x480") +
+         " ";
     s += "enabled=" + String(eeprom.cameras[i].enabled ? "true" : "false");
     s += "<br>";
   }
